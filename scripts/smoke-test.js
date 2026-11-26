@@ -712,7 +712,7 @@ try {
   // update-checkin.mjs are standalone scripts update-notify.mjs spawns detached (never declared in
   // hooks.json), but files[] still ships them, so assert all are packaged like the rest.
   const hookFiles = ['hooks.json', 'obsidize-hook.mjs', 'run.cjs', 'telemetry-count.mjs', 'telemetry-count-skill.mjs',
-    'update-fetch.mjs', 'update-notify.mjs', 'update-checkin.mjs', 'register.mjs', 'graceful-pause.mjs', 'progress.mjs',
+    'update-fetch.mjs', 'update-notify.mjs', 'update-checkin.mjs', 'retired-notify.mjs', 'register.mjs', 'graceful-pause.mjs', 'progress.mjs',
     'progress-fallback.mjs'];
   for (const f of hookFiles) {
     ok(fs.existsSync(path.join(root, 'hooks', f)), `hooks/${f} exists in the repo`);
@@ -1682,6 +1682,20 @@ console.log(JSON.stringify(['codex', 'gemini', 'opencode'].map((cli) => seatPlan
   ok(/win32\.join\(process\.env\.SystemRoot \|\| 'C:\\\\Windows', 'System32', 'taskkill\.exe'\)/.test(pggCdp) && !/execFileSync\(\s*['"]taskkill/.test(pggCdp)
      && /'--remote-debugging-pipe'/.test(pggCdp) && !/remote-debugging-port/.test(pggCdp),
      'pgg-taskkill: presentation-graphic-gen takes taskkill.exe from System32 and drives the browser over --remote-debugging-pipe, not a port');
+  // humanizer and the presentation-graphic-gen polishing loop share consensus.mjs and apply-fix.mjs (humanizer is the
+  // source); Codex seats name the parent model, so both Codex procedures turn the reply model check off. The notice
+  // for a retired plugin is a Claude Code SessionStart hook of its own: no Codex hook runs it or imports it, so the
+  // Codex hooks' banker-hooks-rev does not change with it.
+  const adapterSrc = fs.readFileSync(path.join(root, 'scripts', 'sync-adapter.js'), 'utf8');
+  const hzDocs = ['skills/humanizer/references/consensus-loop.md', 'skills/humanizer/SKILL.md', 'skills/presentation-graphic-gen/references/polish-loop.md', 'skills/presentation-graphic-gen/SKILL.md']
+    .map((f) => fs.readFileSync(path.join(root, f), 'utf8'));
+  const claudeStarts = JSON.stringify(JSON.parse(fs.readFileSync(path.join(root, 'hooks', 'hooks.json'), 'utf8')).hooks.SessionStart);
+  const codexHookText = fs.readFileSync(path.join(root, 'codex', 'hooks.json'), 'utf8') + fs.readFileSync(path.join(root, 'bin', 'lib', 'codex-hooks.mjs'), 'utf8')
+    + fs.readFileSync(path.join(root, 'hooks', 'update-notify.mjs'), 'utf8');
+  ok(/from: 'humanizer\/scripts', to: 'presentation-graphic-gen\/scripts', files: \['consensus\.mjs', 'apply-fix\.mjs'\]/.test(adapterSrc)
+     && hzDocs.every((t) => /"modelCheck": "none"/.test(t))
+     && /hooks\/retired-notify\.mjs/.test(claudeStarts) && !/retired/.test(codexHookText),
+     'humanizer-share: consensus.mjs and apply-fix.mjs are humanizer\'s copies in presentation-graphic-gen, both Codex procedures set modelCheck none, and the retired-plugin notice is a Claude-only hook no Codex hook reaches');
 } catch (e) {
   console.error('HARNESS ERROR:', e.message);
   failures++;

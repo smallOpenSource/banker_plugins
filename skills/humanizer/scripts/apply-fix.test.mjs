@@ -1,14 +1,14 @@
-// apply-fix.test.mjs: the polishing loop's apply step. Run: node --test scripts/apply-fix.test.mjs
+// apply-fix.test.mjs: the consensus loop's apply step (shared with presentation-graphic-gen). Run: node --test scripts/apply-fix.test.mjs
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { applyFixes } from './apply-fix.mjs';
 
-const TMP = mkdtempSync(join(tmpdir(), 'pgg-apply-test-'));
+const TMP = mkdtempSync(join(tmpdir(), 'humanizer-apply-test-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
 const CLI = fileURLToPath(new URL('./apply-fix.mjs', import.meta.url));
 
@@ -96,4 +96,43 @@ test('CLI usage errors exit 2', () => {
   const r = spawnSync(process.execPath, [CLI, bad], { encoding: 'utf8' });
   assert.equal(r.status, 2);
   assert.match(r.stderr, /expected an array/);
+});
+
+test('UTF-16 (LE and BE, with BOM) and UTF-8 with a BOM are written back in the same encoding; another encoding is skipped', () => {
+  const root = fixture('enc');
+  const le = Buffer.from('\uFEFF사용자에 대해 말한다.\r\n', 'utf16le');
+  writeFileSync(join(root, 'le.md'), le);
+  writeFileSync(join(root, 'be.md'), Buffer.from(le).swap16());
+  writeFileSync(join(root, 'bom.md'), Buffer.from('\uFEFF사용자에 대해 말한다.\n', 'utf8'));
+  writeFileSync(join(root, 'cp949.md'), Buffer.from([0xb0, 0xa1, 0xb3, 0xaa, 0x0a]));
+  const edit = (file) => ({ file, from: '사용자에 대해', to: '사용자에게' });
+  const r = applyFixes([edit('le.md'), edit('be.md'), edit('bom.md'), { file: 'cp949.md', from: 'x', to: 'y' }], { root });
+  assert.equal(r.applied.length, 3);
+  assert.deepEqual(r.skipped.map((s) => s.reason), ['file is not UTF-8 (or UTF-16 with a BOM)']);
+  assert.deepEqual(readFileSync(join(root, 'le.md')), Buffer.from('\uFEFF사용자에게 말한다.\r\n', 'utf16le'));
+  assert.deepEqual(readFileSync(join(root, 'be.md')), Buffer.from('\uFEFF사용자에게 말한다.\r\n', 'utf16le').swap16());
+  assert.deepEqual(readFileSync(join(root, 'bom.md')), Buffer.from('\uFEFF사용자에게 말한다.\n', 'utf8'));
+  assert.deepEqual(readFileSync(join(root, 'cp949.md')), Buffer.from([0xb0, 0xa1, 0xb3, 0xaa, 0x0a]));
+});
+
+test('the file mode is kept (POSIX)', { skip: process.platform === 'win32' && 'Windows has no POSIX mode bits' }, () => {
+  const root = fixture('mode');
+  chmodSync(join(root, 'deck.md'), 0o640);
+  applyFixes([{ file: 'deck.md', from: '커피를', to: '차를' }], { root });
+  assert.equal(statSync(join(root, 'deck.md')).mode & 0o777, 0o640);
+});
+
+test('a file that is a link is not changed and not replaced by a plain file', () => {
+  const root = fixture('link');
+  try {
+    symlinkSync(join(root, 'deck.md'), join(root, 'alias.md'));
+  } catch (e) {
+    if (process.platform === 'win32' && e.code === 'EPERM') return; // Windows without the right to make links
+    throw e;
+  }
+  const before = readFileSync(join(root, 'deck.md'));
+  const r = applyFixes([{ file: 'alias.md', from: '커피를', to: '차를' }], { root });
+  assert.deepEqual(r.skipped.map((s) => s.reason), ['file is a link; give the file it leads to']);
+  assert.ok(lstatSync(join(root, 'alias.md')).isSymbolicLink());
+  assert.deepEqual(readFileSync(join(root, 'deck.md')), before);
 });

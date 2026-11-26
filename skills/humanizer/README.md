@@ -1,5 +1,10 @@
 # Humanizer
 
+> **In banker:** this README is the upstream guide of blader/humanizer 2.8.0, kept with its MIT notice (`LICENSE`).
+> banker's `humanizer` is a different skill now: independent small-model seats propose and vote on edits, for any
+> language (`SKILL.md`, `references/consensus-loop.md`). The upstream pattern list is `references/patterns-en.md`,
+> the reference of the English seats. The installation and usage below describe the upstream skill.
+
 A skill for Claude Code and OpenCode that removes signs of AI-generated writing from text, making it sound more natural and human.
 
 ## Installation

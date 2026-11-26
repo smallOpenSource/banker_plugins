@@ -203,6 +203,27 @@ function setupClaude(dryRun) {
   return true;
 }
 
+// Plugins whose skills banker retired (bin/lib/retired-plugins.mjs, now humanize-korean@im-not-ai): the user and local
+// scope installs are uninstalled with `claude plugin uninstall <id> --scope <scope>`, a project scope one is reported
+// with its command (the project shares it). The marketplace stays. Only local files are read and the uninstall works
+// offline; one that does not end in 60 seconds is stopped and reported. Each result is read back from the file.
+async function retireClaude(dryRun) {
+  const rp = await import(pathToFileURL(path.join(__dirname, 'lib', 'retired-plugins.mjs')).href);
+  const installs = rp.retiredInstalls();
+  if (!installs.length) return;
+  log('• Retired plugins (their skills did not work; banker\'s humanizer replaces them):');
+  for (const inst of installs) {
+    const step = rp.uninstallStep(inst);
+    const cmd = rp.commandText(step);
+    if (!step.run) { warn(`  left as it is: ${inst.id} (scope ${inst.scope}): ${step.why}. To remove it: ${cmd}`); continue; }
+    if (dryRun) { log(`  [dry-run] ${cmd}`); continue; }
+    try { cp.execFileSync('claude', step.args, { stdio: ['ignore', 'inherit', 'inherit'], timeout: 60000, ...bareSpawnOpts(), cwd: step.cwd }); }
+    catch (e) { warn(`  ${cmd} failed${e && e.code === 'ETIMEDOUT' ? ' (no end in 60 seconds)' : ''}`); }
+    const left = rp.retiredInstalls().some((i) => i.id === inst.id && i.scope === inst.scope && i.projectPath === inst.projectPath);
+    log(left ? `  still installed: ${inst.id} (scope ${inst.scope}). To remove it: ${cmd}` : `  uninstalled: ${inst.id} (scope ${inst.scope})`);
+  }
+}
+
 /* ---------- Codex target ---------- */
 function setupCodex(dryRun, scope) {
   log(`• Codex CLI (scope=${scope}):`);
@@ -657,7 +678,8 @@ Usage:
 
 Notes:
   - setup/uninstall with no target flag applies to BOTH tools.
-  - --claude registers the marketplace + installs banker@banker-plugins (skills as /banker:*).
+  - --claude registers the marketplace + installs banker@banker-plugins (skills as /banker:*), and uninstalls
+    humanize-korean@im-not-ai (user and local scope; its humanize skills are retired, its marketplace stays).
   - --codex copies codex-eligible skills -> ~/.codex/skills/banker-* and commands -> ~/.codex/prompts/banker-*.md
     ($CODEX_HOME instead of ~/.codex when it is set).
   - Codex can also take banker as a plugin (codex plugin marketplace add smallOpenSource/banker_plugins, then
@@ -675,7 +697,7 @@ async function main() {
   assertNotRoot();
   if (a.cmd === 'setup') {
     log(`banker setup${a.dryRun ? ' (dry-run)' : ''}: claude=${a.claude} codex=${a.codex}`);
-    if (a.claude) setupClaude(a.dryRun);
+    if (a.claude && setupClaude(a.dryRun)) await retireClaude(a.dryRun);
     if (a.codex && setupCodex(a.dryRun, a.scope)) {
       await setupCodexHooks(a.dryRun, a.scope);
       if (a.scope === 'user') await warnCodexPlugin(codexBase('user'));

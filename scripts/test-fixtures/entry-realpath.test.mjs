@@ -28,6 +28,7 @@ const CASES = {
   "codex/skills/teamwork/scripts/teamwork.mjs": {},
   "hooks/obsidize-hook.mjs": HOOK,
   "hooks/ralph-continue-codex.mjs": HOOK,
+  "hooks/retired-notify.mjs": HOOK,
   "hooks/stop-codex.mjs": HOOK,
   "hooks/update-notify.mjs": HOOK,
   "scripts/test-fixtures/omc-wiki-cases.mjs": {},
@@ -43,6 +44,9 @@ const CASES = {
   "skills/build-testbox/scripts/testbox.mjs": {},
   "skills/git-init/scripts/git-init.mjs": {},
   "skills/git-init/scripts/payload-scan.mjs": {},
+  "skills/humanizer/scripts/apply-fix.mjs": {},
+  "skills/humanizer/scripts/consensus.mjs": {},
+  "skills/humanizer/scripts/lang.mjs": {},
   "skills/init-dir/scripts/init-dir.mjs": {},
   "skills/make-evidence/scripts/evidence.mjs": {},
   "skills/motion-graphic-make/references/curate.mjs": STOP,
@@ -56,6 +60,7 @@ const CASES = {
   "skills/presentation-graphic-gen/scripts/build.mjs": {},
   "skills/presentation-graphic-gen/scripts/cdp.mjs": {},
   "skills/presentation-graphic-gen/scripts/check.mjs": {},
+  "skills/presentation-graphic-gen/scripts/consensus.mjs": {},
   "skills/presentation-graphic-gen/scripts/make.mjs": {},
   "skills/presentation-graphic-gen/scripts/pptx-anim-probe.mjs": {},
   "skills/presentation-graphic-gen/scripts/pptx-edit.mjs": {},
@@ -120,7 +125,8 @@ function run(file, c, extraEnv) {
   mkdirSync(home);
   mkdirSync(cwd);
   const mark = join(work, "stdin.mark");
-  const env = { ...process.env, HOME: home, USERPROFILE: home, CODEX_HOME: join(home, ".codex"), BANKER_NO_UPDATE_CHECK: "1", BANKER_NO_TELEMETRY: "1", BANKER_TEST_STDIN_MARK: mark, ...extraEnv };
+  // Every config folder a command may read or write is under the temp home, never the developer's.
+  const env = { ...process.env, HOME: home, USERPROFILE: home, CODEX_HOME: join(home, ".codex"), XDG_CONFIG_HOME: join(home, ".config"), CLAUDE_CONFIG_DIR: join(home, ".claude"), APPDATA: join(home, "AppData", "Roaming"), LOCALAPPDATA: join(home, "AppData", "Local"), BANKER_NO_UPDATE_CHECK: "1", BANKER_NO_TELEMETRY: "1", BANKER_TEST_STDIN_MARK: mark, ...extraEnv };
   for (const k of ["CODEX_THREAD_ID", "TMUX", "CLAUDE_PLUGIN_ROOT", "PLUGIN_ROOT", "NODE_OPTIONS"]) delete env[k];
   try {
     const r = spawnSync(process.execPath, ["--import", PRELOAD, file, ...(c.args ?? BOGUS)], { cwd, env, input: c.input ?? "", encoding: "utf8", timeout: 60000 });

@@ -306,7 +306,7 @@ test('hooks.json: top-level shape, obsidizer entry found by contract (not index)
   assert.deepEqual(Object.keys(config).sort(), ['description', 'hooks', 'modules'], 'top-level keys are exactly description + hooks + modules');
   assert.deepEqual(config.modules, ['./register.mjs'], 'one function-hooks module, the register entry');
   assert.ok(Array.isArray(config.hooks.PostToolUse), 'PostToolUse must exist as an array');
-  // hooks.json 은 이제 UserPromptExpansion(텔레메트리 카운트) · SessionStart(update-notify) 도
+  // hooks.json 은 이제 UserPromptExpansion(텔레메트리 카운트) · SessionStart(update-notify, retired-notify) 도
   // 형제 키로 함께 배선한다. 그 항목들은 아래 테스트에서 따로 검증하므로, 여기서는
   // PostToolUse 가 top-level hooks 의 유일한 키일 것을 더 이상 요구하지 않는다.
 
@@ -340,8 +340,10 @@ test('hooks.json: Skill / UserPromptExpansion / SessionStart entries route throu
   for (const entry of expansions) assertRunCjsCommand(entry, `UserPromptExpansion ${entry.matcher}`);
 
   assert.ok(Array.isArray(config.hooks.SessionStart), 'SessionStart must exist as an array');
-  assert.equal(config.hooks.SessionStart.length, 1, 'exactly one SessionStart entry');
-  assertRunCjsCommand(config.hooks.SessionStart[0], 'SessionStart update-notify');
+  // update-notify (update check) and retired-notify (the one-time notice for a plugin banker retired, Claude Code only)
+  const starts = config.hooks.SessionStart.map((entry) => entry.hooks.map((h) => h.command.split('/').pop()).join());
+  assert.deepEqual(starts, ['update-notify.mjs', 'retired-notify.mjs'], 'the update notice first, then the retired-plugin notice');
+  for (const entry of config.hooks.SessionStart) assertRunCjsCommand(entry, `SessionStart ${entry.hooks[0].command.split('/').pop()}`);
 });
 
 test('hooks.json matcher: fires on wiki writes, tolerates prefix variants, ignores deletes', () => {
