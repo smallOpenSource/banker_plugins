@@ -2,7 +2,7 @@
 
 WBS 탭의 자료. 작업 분해와 일정을 간트 차트 한 장으로 보인다.
 init 절차의 WBS 단계와 갱신 규칙(SKILL.md)에서 에이전트가 쓰고, `check` 가 wbs-gen 과 같은 검사로 확인한다.
-화면은 자동 갱신하지 않는다. 주소 `?tab=wbs`, `export` 파일의 `#wbs`.
+화면은 자동 갱신하지 않는다. 주소 `?tab=wbs`, `export`, `static` 파일의 `#wbs`.
 
 ## 형식
 

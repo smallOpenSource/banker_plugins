@@ -63,9 +63,9 @@ test('SKILL.md: 본문 표식 평문 한 줄, 한 번만, HTML 주석과 코드 
   }
 });
 
-test('SKILL.md: --help 의 하위 명령 10개가 모두 하위 명령 표에 있음, serve 는 내부용으로만', T, () => {
+test('SKILL.md: --help 의 하위 명령 11개가 모두 하위 명령 표에 있음, serve 는 내부용으로만', T, () => {
   const cmds = [...HELP.matchAll(/^ {2}([a-z]+) /gm)].map((m) => m[1]);
-  assert.deepEqual(cmds, ['init', 'start', 'stop', 'status', 'export', 'item', 'note', 'stage', 'story', 'check']);
+  assert.deepEqual(cmds, ['init', 'start', 'stop', 'status', 'export', 'static', 'item', 'note', 'stage', 'story', 'check']);
   const table = section('하위 명령');
   for (const c of cmds) assert.match(table, new RegExp(`^\\| \`${c}\` \\|`, 'm'), c);
   assert.match(table, /내부용 `serve`/);
@@ -201,4 +201,26 @@ test('SKILL.md, references: 시각은 현지 시간대(Z, 시차 환산 예), �
   const cfg = fs.readFileSync(path.join(SKILL_DIR, 'references', 'config.md'), 'utf8');
   assert.match(cfg, /^\| `wbsAsk` \| 참, 거짓 \|/m);
   assert.ok(fs.readFileSync(path.join(HERE, 'pm-config.mjs'), 'utf8').includes("take('wbsAsk',"));
+});
+
+test('SKILL.md: 인자 표의 --static 행, 스냅샷 절차(자료 없음은 init --memory later 와 4~14, 있음은 check 와 정리, 서버 그대로, 보고), 규칙 등록 한 번 묻기', T, () => {
+  const args = section('인자');
+  assert.match(args, /^\| `--static \[<파일>\]` \| .*스냅샷\(`--static`\)/m);
+  const s = section('스냅샷(`--static`)');
+  for (const w of ['`init --runtime <rt> --memory later', '"init 절차" 의 4~14', '15(`start`)는 하지 않는다', '`check` 를 실행한다', '12 의 정리 단계', '코드를 다시 읽어 자료를 갱신하지 않는다', '`<data>/snapshots/progress-mon-<YYYYMMDD-HHmm>.html`', '`-2`, `-3`', '`스냅샷: <절대 경로>`', '`기준 시각: <시각>`', '브라우저를 대신 열지 않는다', '서버를 띄우지도 끄지도 않는다']) assert.ok(s.includes(w), w);
+  assert.match(s, /node "<S>\/scripts\/progress-mon\.mjs" static --runtime <rt> \[<파일>\]/);
+  const bare = section('인자 없는 호출');
+  assert.match(bare, /^ {3}\| 자료 폴더가 있고 `갱신 규칙: 미등록\(묻기\)` 줄이 있음 \| .*스냅샷으로 만든 자료 폴더의 규칙 등록.*`미등록\(묻지 않음\)` 이면 하지 않는다/m);
+  const step = bare.slice(bare.indexOf('### 스냅샷으로 만든 자료 폴더의 규칙 등록'));
+  for (const w of ['AskUserQuestion', 'request_user_input', '`--auto`', '`"ruleAsk": false`', '`갱신 규칙: 미등록(묻지 않음)`', '다른 종류(`claude-md`, `agents-md`, `auto-memory`, `none`)로 init 한 자료 폴더는 줄이 없고 묻지 않는다']) assert.ok(step.includes(w), w);
+  // 문서가 인용한 출력 문구는 스크립트가 실제로 내는 문구
+  const server = fs.readFileSync(path.join(HERE, 'pm-server.mjs'), 'utf8');
+  for (const w of ["'미등록(묻기)'", "'미등록(묻지 않음)'", "'미등록(ruleAsk 값 오류)'", 'io.out(`갱신 규칙: ${r}`)']) assert.ok(server.includes(w), w);
+  const render = fs.readFileSync(path.join(HERE, 'pm-render.mjs'), 'utf8');
+  for (const w of ['io.out(`스냅샷: ${out}`)', 'io.out(`기준 시각: ${nowText(now)}`)', '`progress-mon-${minuteStamp(now)}`', '스냅샷 ${esc(nowText(now))} 기준']) assert.ok(render.includes(w), w);
+  assert.ok(fs.readFileSync(path.join(HERE, 'pm-memory.mjs'), 'utf8').includes("'none', 'later']"));
+  const cfg = fs.readFileSync(path.join(SKILL_DIR, 'references', 'config.md'), 'utf8');
+  assert.match(cfg, /^\| `ruleAsk` \| 참, 거짓 \|/m);
+  assert.ok(fs.readFileSync(path.join(HERE, 'pm-config.mjs'), 'utf8').includes("take('ruleAsk',"));
+  assert.match(frontmatter(SKILL).keys.description, /`--static \[<파일>\]`/);
 });
