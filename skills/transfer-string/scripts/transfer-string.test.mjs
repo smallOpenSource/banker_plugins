@@ -9,7 +9,7 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -987,6 +987,93 @@ test("launcher: the Store Python's alias and the App Installer stub stay candida
   const got = pythons({ PATH: msi }, m.opts);
   assert.deepEqual(got.filter((c) => c[0].startsWith(msi) || c[0] === rt), [[rt]], "an MSI install's launchers become its runtime");
   assert.equal(m.calls[0].cmd, join(msi, "pymanager.exe"));
+});
+
+/** A new folder whose full path is about len characters long. */
+function deepDir(len) {
+  let d = fresh();
+  while (d.length < len - 21) d = join(d, "d".repeat(20));
+  d = join(d, "e".repeat(Math.max(1, len - d.length - 1)));
+  mkdirSync(d, { recursive: true });
+  return d;
+}
+
+test("a deep folder (a 250-character path): .restored, the number, --keep-name, a plain name and compress all write past Windows' 260, with the download mark", () => {
+  needPython();
+  const d = deepDir(250);
+  const put = (name, args = [], data = Buffer.from("deep\n")) => {
+    const src = join(d, `in-${randomBytes(4).toString("hex")}.b64`);
+    writeFileSync(src, named(name, data));
+    return ts(["decompress", src, ...args], fresh()); // a short working folder: only the files are deep
+  };
+  const a = put("setup.exe");
+  assert.equal(a.exit, 0, a.err);
+  assert.equal(a.file, join(d, "setup.exe.restored"));
+  assert.ok(a.file.length > 260, `${a.file.length} characters`);
+  assert.equal(readFileSync(a.file, "utf8"), "deep\n");
+  const b = put("setup.exe", [], Buffer.from("second"));
+  assert.equal(b.file, join(d, "setup.exe-1.restored"), "the number");
+  assert.equal(readFileSync(a.file, "utf8"), "deep\n", "the first file stays");
+  const k = put("run-the-script.sh", ["--keep-name"]);
+  assert.equal(k.exit, 0, k.err);
+  assert.equal(k.file, join(d, "run-the-script.sh"), "--keep-name");
+  const p = put("notes-of-the-week.md");
+  assert.equal(p.file, join(d, "notes-of-the-week.md"), "a name that is not risky");
+  for (const r of [a, b, k, p]) {
+    assert.ok(r.file.length > 260);
+    if (WIN) assert.match(readFileSync(`${r.file}:Zone.Identifier`, "latin1"), /ZoneId=3/, `${basename(r.file)} is marked`);
+  }
+  writeFileSync(join(d, "report-of-the.md"), "보고서\n".repeat(30));
+  const c = ts(["compress", join(d, "report-of-the.md"), "--no-clipboard"], fresh());
+  assert.equal(c.exit, 0, c.err);
+  assert.equal(c.file, join(d, "report-of-the.md.b64"));
+});
+
+// Windows: a symbolic link needs an administrator or Developer Mode; elsewhere it always works
+const CAN_LINK = (() => {
+  const l = join(TMP, "can-link");
+  try {
+    symlinkSync(join(TMP, "nowhere"), l);
+    rmSync(l);
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+test("a link at the restored name is not followed, a broken one included: the next number, the link and its target untouched (short and deep folder)", { skip: !CAN_LINK && "Windows: making a symbolic link needs an administrator or Developer Mode" }, () => {
+  needPython();
+  for (const d of [fresh(), deepDir(250)]) {
+    const target = join(d, "elsewhere.txt");
+    symlinkSync(target, join(d, "setup.exe.restored"));
+    writeFileSync(join(d, "mine.txt"), "mine");
+    symlinkSync(join(d, "mine.txt"), join(d, "notes.md"));
+    const src = join(d, "in.b64");
+    writeFileSync(src, named("setup.exe", Buffer.from("payload")));
+    const r = ts(["decompress", src], fresh());
+    assert.equal(r.exit, 0, r.err);
+    assert.equal(r.file, join(d, "setup.exe-1.restored"), "the broken link's name is taken");
+    assert.ok(!existsSync(target), "the broken link's target is not made");
+    assert.ok(lstatSync(join(d, "setup.exe.restored")).isSymbolicLink(), "the link stays");
+    writeFileSync(src, named("notes.md", Buffer.from("payload")));
+    const n = ts(["decompress", src], fresh());
+    assert.equal(n.file, join(d, "notes-1.md"));
+    assert.equal(readFileSync(join(d, "mine.txt"), "utf8"), "mine", "the linked file is unchanged");
+  }
+});
+
+const UNC = WIN && existsSync("\\\\localhost\\C$\\Windows");
+test("Windows: a deep folder through a UNC path (\\\\localhost\\C$) writes past 260 too (the \\\\?\\UNC\\ form)", { skip: !UNC && "Windows with the C$ administrative share" }, () => {
+  needPython();
+  const d = deepDir(240);
+  const u = `\\\\localhost\\${d[0]}$${d.slice(2)}`;
+  writeFileSync(join(d, "in.b64"), named("setup.exe", Buffer.from("unc")));
+  const r = ts(["decompress", join(u, "in.b64")], fresh());
+  assert.equal(r.exit, 0, r.err);
+  assert.equal(r.file, join(u, "setup.exe.restored"));
+  assert.ok(r.file.length > 260, `${r.file.length} characters`);
+  assert.equal(readFileSync(join(d, "setup.exe.restored"), "utf8"), "unc");
+  assert.equal(r.res.mark, "zone");
 });
 
 const REAL = process.env.TRANSFER_STRING_REAL_CLIPBOARD === "1";

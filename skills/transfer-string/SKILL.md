@@ -14,7 +14,7 @@ argument-hint: "{compress|decompress} {파일 경로 | --clipboard} [--hangul] [
 
 - **문자열은 파일이나 클립보드로만 오간다.** 모델이 문자열을 답변에 적거나 명령줄에 넣지 않는다. 그래서 문자열 길이만큼 토큰을 쓰지 않고, 옮겨 적다 한 글자가 바뀌는 일도 없다.
 - **설치와 내려받기가 없다.** 도우미는 Python 3.7 이상의 표준 라이브러리만 쓰고 네트워크를 쓰지 않는다. Python 은 실행기(`transfer-string.mjs`)가 찾는다. Windows 의 Python install manager(PyManager)는 런타임이 없으면 실행만으로 Python 을 내려받아 설치하므로, 실행기는 그 실행 파일(`py`, `python`, `python3`)을 실행하지 않는다. PyManager 의 로컬 목록(`pymanager list`)에 있는 런타임만 후보로 쓰고, 런타임이 없으면 건너뛴다. 관리자 정책(`HKLM\Software\Policies\Python\PyManager`)이나 사용자 설정 파일로 자동 설치가 켜져 있어도 같다.
-- **덮어쓰지 않는다.** 같은 이름이 있으면 확장자 앞에 `-1`, `-2` 를 붙인다(`report.md-1.b64`, `report-1.md`).
+- **덮어쓰지 않는다.** 같은 이름이 있으면 확장자 앞에 `-1`, `-2` 를 붙인다(`report.md-1.b64`, `report-1.md`). 그 이름이 링크(끊어진 링크 포함)여도 따라가지 않고 다음 번호로 쓴다. Windows 에서는 경로가 260자를 넘는 깊은 폴더에도 쓴다(확장 경로 `\\?\`, UNC 는 `\\?\UNC\`).
 - **실행되거나 자동으로 읽힐 이름은 바로 쓰지 않는다.** 프로그램, 스크립트, 설치 패키지, 매크로 문서, 점 파일, 도구나 에이전트가 폴더에서 읽는 이름(`conftest.py`, `package.json`, `Makefile`, `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `AGENTS.override.md`, `GEMINI.md`, `autorun.inf` 등, 대소문자 무시)은 뒤에 `.restored` 를 붙여 쓴다(`setup.exe.restored`, `.npmrc.restored`). 확인한 뒤 이름을 바꾸는 것은 사용자가 한다.
 - **손상된 문자열로는 아무것도 쓰지 않는다.** 복원은 crc32 를 먼저 보고, 길이와 sha256 이 맞을 때만 파일을 쓴다.
 - airgap-harness 의 transfer-string 과 문자열 형식이 같다. 한쪽에서 만든 문자열을 다른 쪽에서 풀 수 있다.
