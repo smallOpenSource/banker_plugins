@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.31.0] - 2026-11-26
+
+### Added
+- `progress-mon`: `--static [<파일>]`. 서버를 띄워 계속 갱신하는 대신 요청 시각 기준 스냅샷을 오프라인 단일 HTML 로 만든다. 6탭이 모두 들어 있고, 자동 갱신, 서버 요청, 외부 자원이 없다. 윗부분 문구는 `스냅샷 <시각> 기준` 이다.
+  - 기본 자리는 `<자료 폴더>/snapshots/progress-mon-<YYYYMMDD-HHmm>.html`(현지 시각)이다. 같은 분이면 덮어쓰지 않고 `-2`, `-3` 을 붙인 새 이름에 원자적으로 쓴다. `snapshots/` 는 없으면 만들고, 폴더가 아니거나 링크(끊어진 링크 포함)면 거부한다.
+  - 서버는 띄우지도 끄지도 않는다. 떠 있으면 그대로 둔다. 코드를 다시 읽어 자료를 갱신하지 않고, git 기록과 세션 기록 같은 실시간 자료만 요청 시각에 새로 읽는다.
+  - 자료 폴더가 없으면 `init` 절차로 자료를 쓴 뒤 스냅샷을 만든다. 이때 갱신 규칙은 등록하지 않는다(`init --memory later`, `state.json` 에 남김).
+  - 그런 자료 폴더는 `status` 가 `갱신 규칙: 미등록(묻기)` 줄을 내고, 다음 인자 없는 호출이 한 번 묻는다. 거절하면 `config.json` 에 `ruleAsk: false` 를 적는다(`미등록(묻지 않음)`). 값이 참거짓이 아니면 `미등록(ruleAsk 값 오류)` 이고 묻지 않는다.
+  - 하위 명령 `static [<file>] [--now <ISO>]`. 출력은 `스냅샷: <실제 절대 경로>`, `기준 시각: <시각>` 이다. 자료 폴더가 없으면 종료 1. Codex 는 작업 폴더 밖 `<파일>` 만 승인을 받는다.
+
+### Changed
+- `progress-mon`: `export <file>` 과 `static <file>` 은 있는 파일을 덮어쓰지 않는다. 예전 판의 `export` 는 덮어썼다.
+  - 이름이 있으면 확장자 앞에 `-2`, `-3` 을 붙인 새 이름에 쓴다(999 까지, 넘으면 종료 1). 링크(끊어진 것 포함)를 따라가지 않고, 실제로 쓴 경로를 낸다.
+  - 이름은 `.html` 이나 `.htm` 으로 끝나야 한다. 아니면 종료 1 이다. `items.json` 같은 자료 파일 이름을 실수로 준 것을 막는다.
+  - `init` 정리 단계가 `adr.json` 을 `adr.json.rejected-<시각>` 으로 옮길 때도 번호는 999 까지다. 넘으면 원본을 그대로 두고 오류 줄을 낸다.
+- `progress-mon`: `config.json` 의 `wbsAsk` 가 참거짓이 아니면(`"false"` 같은 문자열, `0`, `null`) `status` 의 `탭 자료:` 줄 끝이 `WBS 없음(wbsAsk 값 오류)` 이다. 인자 없는 호출은 WBS 단계를 다시 묻지 않고, 값을 `true` 나 `false`(따옴표 없음)로 고치거나 지우라고 알린다. `check` 의 FAIL 은 그대로다.
+- `transfer-string`: 실행되거나 에이전트, 도구가 자동으로 읽는 복원 이름은 뒤에 `.restored` 를 붙여 쓴다(`setup.exe.restored`, `.npmrc.restored`). 대상은 점으로 시작하는 이름, 프로그램, 스크립트, 설치 패키지, 매크로 문서, 폴더에서 읽히는 이름이다.
+  - 보고에 `원래 이름:` 줄과, 확인한 뒤 원래 이름으로 바꾸라는 안내가 붙는다. 이름은 사용자가 바꾼다. 모델은 복원 파일을 열거나 실행하거나 이름을 바꾸지 않는다.
+  - `decompress` 의 새 옵션 `--keep-name` 은 원래 이름 그대로 쓰고 경고만 한다. 덮어쓰지 않는 번호 규칙은 그대로다(`setup.exe-1.restored`).
+  - `TSTR_RESULT` 줄의 `file=` 앞에 `renamed=0|1` 이 붙는다.
+  - 위험 이름을 더했다. 이름은 `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `AGENTS.override.md`, `GEMINI.md`, `autorun.inf`(대소문자 무시)다. 확장자는 `.psm1`, `.ps1xml`, `.mjs`, `.cjs`, `.ws`, `.wsh`, `.msp`, `.appx`, `.msix`, `.appxbundle`, `.msixbundle`, `.settingcontent-ms`, `.xlam`, `.dotm`, `.desktop` 이다.
+  - 압축 문자열 형식은 그대로다. airgap-harness 의 transfer-string 과 서로 복원할 수 있다. 다만 위험 이름의 복원 파일 이름은 airgap-harness 와 다르다.
+- `setup-omc-hud`: 래퍼가 더한 payload 경고 줄이 터미널 폭을 넘으면 나눈다.
+  - 래퍼가 폭을 알 때(본줄 줄바꿈과 같은 조건) ` - ` 자리에서 두 줄로 나누고, 그래도 넘는 줄은 단어 사이에서 더 나눈다. 모든 줄이 같은 색이다.
+  - 폭을 모르거나 넓은 터미널은 전과 같은 한 줄이다.
+  - Codex 사본(`setup-omx-hud`)도 같이 바뀌었다.
+
+### Fixed
+- `transfer-string`: Windows 에서 Microsoft Store 판 Python 만 있는 PC 가 종료 9(`E_PYTHON`)로 끝나던 것. `WindowsApps` 의 `python3.exe` 는 App Execution Alias(재분석 지점)라 `stat` 이 접근 오류를 내서 후보에서 빠졌다.
+  - 이제 일반 파일, 또는 Windows 에서 `stat` 이 접근 오류(EACCES, EPERM, UNKNOWN)이고 `lstat` 이 폴더가 아닌 파일이나 링크인 항목을 받는다. 끊어진 링크, 폴더로 stat 되는 junction 과 폴더 링크는 받지 않는다.
+  - 후보는 PATH 의 모든 일치를 넣고 probe 가 고른다. 일반 파일(PATH 순서, 그다음 설치 폴더)이 먼저이고 실행 별칭은 맨 뒤다. 진짜 설치본이 있으면 별칭은 실행하지 않는다. App Installer 스텁은 probe 가 9009 로 끝나 버려진다.
+- `transfer-string`: Python install manager(PyManager)의 `python`, `python3`, `py` 별칭이 런타임이 없을 때 Python 을 내려받아 설치하던 것. probe 와 스크립트 실행 모두 `PYTHON_MANAGER_AUTOMATIC_INSTALL=false` 를 준다(대소문자만 다른 같은 키는 먼저 지움). 런타임이 없으면 바로 끝나고 아무것도 설치하지 않는다.
+- `transfer-string`: `compress-string`, `decompress-string` 이 실행 중 예외를 설치 손상(`E_INSTALL`, 종료 9)으로 보고하던 것. 실행기를 불러오지 못하거나 `run` 이 없을 때만 `E_INSTALL` 종료 9 다. 불러온 뒤 `run()` 의 예외는 `[transfer-string] 오류: 내부 오류 (...)` 와 `E_INTERNAL` 종료 4 다.
+
+### Notes
+- 훅 코드는 바뀌지 않아 Codex 플러그인 사용자에게 `/hooks` 신뢰를 다시 묻지 않는다. `banker-hooks-rev` 는 `cc0b4f7d4e17` 그대로다.
+- 크기: git 추적 파일 합계는 614개, 약 29.0MB(28,964,801 바이트)다. 0.30.0 은 613개, 약 28.9MB 였다. npm 묶음은 430개 파일, 압축 18.3MB, 푼 크기 23.5MB 다.
+
 ## [0.30.0] - 2026-11-25
 
 ### Added

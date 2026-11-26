@@ -3,7 +3,7 @@
 banker 구성요소의 이력표입니다.
 릴리스마다 갱신합니다.
 
-- 기준: 0.30.0 (2026-11-25)
+- 기준: 0.31.0 (2026-11-26)
 - 구성: 스킬 77개, 커맨드 2개, 즉시명령 2개 (모두 81개)
 - 0.18.1 은 GitHub 와 Claude 마켓플레이스로만 나왔습니다. npm 에는 게시하지 않았고, npm 에서는 0.18.0 다음이 0.19.0 입니다.
 - 0.20.3 과 0.20.4 도 GitHub 와 Claude 마켓플레이스로만 나왔습니다. npm 에는 게시하지 않았고, npm 에서는 0.20.2 다음이 0.20.5 입니다.
@@ -100,7 +100,7 @@ npm 묶음에서 빠지는 시험 파일 등은 세지 않습니다.
 | 20 | `/banker:setup` | 2026-06-25 | 0.1.0 | 2026-10-28 | 0.22.0 | 커맨드 | 마지막 업데이트는 일괄 수정(12개 동시): feat: Codex plugin 명령(codex plugin add banker@banker-plugins)으로 설치해도 npm 경로와 같게 동작 |
 | 21 | `compact-wiki` | 2026-06-25 | 0.1.0 | 2026-11-18 | 0.29.0 | 스킬 |  |
 | 22 | `setup-insane-search` | 2026-06-25 | 0.1.0 | 2026-10-21 | 0.20.5 | 스킬 | 마지막 업데이트는 일괄 수정(22개 동시): fix(설치 스킬 airgap): 확인 블록이 Codex sandbox 의 막힘을 먼저 알림, npm ping 은 15초 감시와 업데이트 알림 없이, 실패 보고에 명령과 종료 코드와 stderr, 인증서 오류는 오프라인이 아님, curl 확인은 --ssl-no-revoke(Git Bash 도 Schannel)와 curl.exe 먼저 찾기, dnf 와 apt 의 기다림과 apt-get update 의 종료 0, 판 붙은 python 의 pip 설정, /banker:setup 은 같은 확인 결과를 다시 씀, setup-mcp 는 절대 경로로 등록, nvm 과 Playwright 와 RPM Fusion 원천 확인, RHEL 블록은 옛 nodejs 를 깔지 않음, uv 실패 알림, LibreOffice tarball 은 블록 하나로 정리, Spring 블록은 서브셸, 설치 스킬 밖 설치 안내도 확인, FIFO 캐시 시험이 체크인을 기다림(0.20.5 remains R7) |
-| 23 | `setup-omc-hud` | 2026-06-25 | 0.1.0 | 2026-11-25 | 0.30.0 | 스킬 |  |
+| 23 | `setup-omc-hud` | 2026-06-25 | 0.1.0 | 2026-11-26 | 0.31.0 | 스킬 |  |
 | 24 | `setup-playwright` | 2026-06-25 | 0.1.0 | 2026-10-21 | 0.20.5 | 스킬 | 마지막 업데이트는 일괄 수정(11개 동시): fix(설치 스킬 airgap): in15 의 감시가 호출자의 출력을 15초 쥐던 것(10곳과 smoke 상수, 동작 시험 scripts/in15.test.mjs), setup-playwright 는 chromium 미러만 주면 ffmpeg 의 서버도 확인(airgap-4r), audit-security 받기는 https 만과 ~/.local/bin 만들기, setup-mcp 는 절대 경로가 막는 것과 못 막는 것(node 가 PATH 에 없음)을 바로 적음, 3d-intro-setup 들여쓰기, CHANGELOG 개수(0.20.5 검토 M2, M3, S10~S13, 보안 INFO 9) |
 | 25 | `setup-stitch` | 2026-06-25 | 0.1.0 | 2026-10-21 | 0.20.5 | 스킬 | 옛 이름 `setup-stitch-proxy`, 0.4.0 (2026-07-15)에 개명; 마지막 업데이트는 일괄 수정(11개 동시): fix(설치 스킬 airgap): in15 의 감시가 호출자의 출력을 15초 쥐던 것(10곳과 smoke 상수, 동작 시험 scripts/in15.test.mjs), setup-playwright 는 chromium 미러만 주면 ffmpeg 의 서버도 확인(airgap-4r), audit-security 받기는 https 만과 ~/.local/bin 만들기, setup-mcp 는 절대 경로가 막는 것과 못 막는 것(node 가 PATH 에 없음)을 바로 적음, 3d-intro-setup 들여쓰기, CHANGELOG 개수(0.20.5 검토 M2, M3, S10~S13, 보안 INFO 9) |
 | 26 | `compact-copy` | 2026-06-28 | 0.1.2 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
@@ -147,7 +147,7 @@ npm 묶음에서 빠지는 시험 파일 등은 세지 않습니다.
 | 67 | `theme-selection` | 2026-10-15 | 0.19.0 | 2026-11-19 | 0.29.0 | 스킬 |  |
 | 68 | `lfm` | 2026-10-28 | 0.21.0 | 2026-10-28 | 0.21.0 | 스킬 |  |
 | 69 | `ultraqa` | 2026-10-29 | 0.23.0 | 2026-11-19 | 0.29.0 | 스킬 | Claude Code 전용(Codex 에 설치하지 않음). 마지막 업데이트는 일괄 수정(21개 동시): fix(theme-selection, setup-omc-hud, setup-bypass-permissions, progress, ultra-chain, hooks 외 스킬 20개): realpath 가 argv[1] 을 읽지 못하면 실행 판정이 false(video-gen, wbs-gen, wide-pptx 는 null)를 돌려 명령이 아무것도 안 하고 종료 0 하던 것 - realpath 가 실패하면 resolve 비교로(93bb799, ed39118 과 같은 방식), 대상은 31개 파일의 invokedDirectly 와 그 꼴, Codex progress, codex-bypass, codex-status-line 의 same, 시험 고정 파일 셋. 정본을 고치고 sync-adapter(curate, serve, gate-evidence, payload-scan)와 sync-codex-plugin(append_wiki, setup-omx-hud 사본, codex/hooks.json)으로 맞춤. 훅 4개(obsidize-hook, ralph-continue-codex, stop-codex, update-notify)가 바뀌어 banker-hooks-rev 가 c828964dc68e 에서 cc0b4f7d4e17 로 바뀜(Codex 플러그인 사용자는 다음 세션에 /hooks 신뢰를 다시 받음). argv[1] 의 realpath 만 실패하게 하는 미리 읽기 고정 파일 realpath-fails.mjs 와, argv[1] 을 import.meta.url 과 대는 추적 파일 67개를 모두 두 번 실행해 종료 코드와 출력이 같은지 보는 entry-realpath.test.mjs(새 명령 파일이 표에 없으면 실패) |
-| 70 | `progress-mon` | 2026-10-30 | 0.23.0 | 2026-11-25 | 0.30.0 | 스킬 |  |
+| 70 | `progress-mon` | 2026-10-30 | 0.23.0 | 2026-11-26 | 0.31.0 | 스킬 |  |
 | 71 | `init-dir` | 2026-11-01 | 0.24.0 | 2026-11-19 | 0.29.0 | 스킬 |  |
 | 72 | `git-init` | 2026-11-01 | 0.24.0 | 2026-11-19 | 0.29.0 | 스킬 | 마지막 업데이트는 일괄 수정(21개 동시): fix(theme-selection, setup-omc-hud, setup-bypass-permissions, progress, ultra-chain, hooks 외 스킬 20개): realpath 가 argv[1] 을 읽지 못하면 실행 판정이 false(video-gen, wbs-gen, wide-pptx 는 null)를 돌려 명령이 아무것도 안 하고 종료 0 하던 것 - realpath 가 실패하면 resolve 비교로(93bb799, ed39118 과 같은 방식), 대상은 31개 파일의 invokedDirectly 와 그 꼴, Codex progress, codex-bypass, codex-status-line 의 same, 시험 고정 파일 셋. 정본을 고치고 sync-adapter(curate, serve, gate-evidence, payload-scan)와 sync-codex-plugin(append_wiki, setup-omx-hud 사본, codex/hooks.json)으로 맞춤. 훅 4개(obsidize-hook, ralph-continue-codex, stop-codex, update-notify)가 바뀌어 banker-hooks-rev 가 c828964dc68e 에서 cc0b4f7d4e17 로 바뀜(Codex 플러그인 사용자는 다음 세션에 /hooks 신뢰를 다시 받음). argv[1] 의 realpath 만 실패하게 하는 미리 읽기 고정 파일 realpath-fails.mjs 와, argv[1] 을 import.meta.url 과 대는 추적 파일 67개를 모두 두 번 실행해 종료 코드와 출력이 같은지 보는 entry-realpath.test.mjs(새 명령 파일이 표에 없으면 실패) |
 | 73 | `build-testbox` | 2026-11-01 | 0.24.0 | 2026-11-19 | 0.29.0 | 스킬 |  |
@@ -158,7 +158,7 @@ npm 묶음에서 빠지는 시험 파일 등은 세지 않습니다.
 | 78 | `wide-pptx` | 2026-11-10 | 0.28.0 | 2026-11-19 | 0.29.0 | 스킬 | 마지막 업데이트는 일괄 수정(21개 동시): fix(theme-selection, setup-omc-hud, setup-bypass-permissions, progress, ultra-chain, hooks 외 스킬 20개): realpath 가 argv[1] 을 읽지 못하면 실행 판정이 false(video-gen, wbs-gen, wide-pptx 는 null)를 돌려 명령이 아무것도 안 하고 종료 0 하던 것 - realpath 가 실패하면 resolve 비교로(93bb799, ed39118 과 같은 방식), 대상은 31개 파일의 invokedDirectly 와 그 꼴, Codex progress, codex-bypass, codex-status-line 의 same, 시험 고정 파일 셋. 정본을 고치고 sync-adapter(curate, serve, gate-evidence, payload-scan)와 sync-codex-plugin(append_wiki, setup-omx-hud 사본, codex/hooks.json)으로 맞춤. 훅 4개(obsidize-hook, ralph-continue-codex, stop-codex, update-notify)가 바뀌어 banker-hooks-rev 가 c828964dc68e 에서 cc0b4f7d4e17 로 바뀜(Codex 플러그인 사용자는 다음 세션에 /hooks 신뢰를 다시 받음). argv[1] 의 realpath 만 실패하게 하는 미리 읽기 고정 파일 realpath-fails.mjs 와, argv[1] 을 import.meta.url 과 대는 추적 파일 67개를 모두 두 번 실행해 종료 코드와 출력이 같은지 보는 entry-realpath.test.mjs(새 명령 파일이 표에 없으면 실패) |
 | 79 | `video-gen` | 2026-11-10 | 0.28.0 | 2026-11-19 | 0.29.0 | 스킬 | 마지막 업데이트는 일괄 수정(21개 동시): fix(theme-selection, setup-omc-hud, setup-bypass-permissions, progress, ultra-chain, hooks 외 스킬 20개): realpath 가 argv[1] 을 읽지 못하면 실행 판정이 false(video-gen, wbs-gen, wide-pptx 는 null)를 돌려 명령이 아무것도 안 하고 종료 0 하던 것 - realpath 가 실패하면 resolve 비교로(93bb799, ed39118 과 같은 방식), 대상은 31개 파일의 invokedDirectly 와 그 꼴, Codex progress, codex-bypass, codex-status-line 의 same, 시험 고정 파일 셋. 정본을 고치고 sync-adapter(curate, serve, gate-evidence, payload-scan)와 sync-codex-plugin(append_wiki, setup-omx-hud 사본, codex/hooks.json)으로 맞춤. 훅 4개(obsidize-hook, ralph-continue-codex, stop-codex, update-notify)가 바뀌어 banker-hooks-rev 가 c828964dc68e 에서 cc0b4f7d4e17 로 바뀜(Codex 플러그인 사용자는 다음 세션에 /hooks 신뢰를 다시 받음). argv[1] 의 realpath 만 실패하게 하는 미리 읽기 고정 파일 realpath-fails.mjs 와, argv[1] 을 import.meta.url 과 대는 추적 파일 67개를 모두 두 번 실행해 종료 코드와 출력이 같은지 보는 entry-realpath.test.mjs(새 명령 파일이 표에 없으면 실패) |
 | 80 | `presentation-graphic-gen` | 2026-11-18 | 0.29.0 | 2026-11-19 | 0.29.1 | 스킬 |  |
-| 81 | `transfer-string` | 2026-11-25 | 0.30.0 | 2026-11-25 | 0.30.0 | 스킬 |  |
+| 81 | `transfer-string` | 2026-11-25 | 0.30.0 | 2026-11-26 | 0.31.0 | 스킬 |  |
 
 ## 삭제와 개명 이력
 

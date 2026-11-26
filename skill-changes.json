@@ -415,5 +415,10 @@
     "banker:setup-omc-hud",
     "banker:transfer-string",
     "banker:wbs-gen"
+  ],
+  "0.31.0": [
+    "banker:progress-mon",
+    "banker:setup-omc-hud",
+    "banker:transfer-string"
   ]
 }
