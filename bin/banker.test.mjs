@@ -341,6 +341,28 @@ test('uninstall --codex --dry-run: teamwork goes when only the npm skills it rem
   assert.match(out, /teamwork kept: banker is still in this Codex home \(banker@banker-plugins\)/);
 }));
 
+// in-korean's hooks and never-public's values sit in the user's own settings, so uninstall names them in one line.
+test('uninstall says when in-korean hooks or never-public values stay in the user settings', () => withXdg((dir) => {
+  const claude = path.join(dir, 'claude');
+  const codex = path.join(dir, 'codex');
+  fs.mkdirSync(claude, { recursive: true });
+  fs.mkdirSync(codex, { recursive: true });
+  const env = { CLAUDE_CONFIG_DIR: claude, CODEX_HOME: codex };
+  let { out, code } = run(['uninstall', '--codex', '--dry-run'], dir, env);
+  assert.equal(code, 0, out);
+  assert.doesNotMatch(out, /stay after uninstall/, 'nothing to say when neither skill is on');
+  const hook = { type: 'command', command: "printf '%s\\n' '{}' # banker:in-korean" };
+  fs.writeFileSync(path.join(claude, 'settings.json'), JSON.stringify({ hooks: { SessionStart: [{ hooks: [hook] }] } }));
+  fs.writeFileSync(path.join(codex, 'hooks.json'), JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [hook] }] } }));
+  fs.mkdirSync(path.join(dir, 'banker'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'banker', 'config.json.never-public.json'), '{}');
+  ({ out, code } = run(['uninstall', '--codex', '--dry-run'], dir, env));
+  assert.equal(code, 0, out);
+  const line = out.split('\n').find((l) => l.includes('stay after uninstall')) || '';
+  assert.ok(line.includes(path.join(claude, 'settings.json')) && line.includes(path.join(codex, 'hooks.json')) && line.includes('in-korean off'), line);
+  assert.ok(line.includes(path.join(dir, 'banker', 'config.json')) && line.includes('never-public off'), line);
+}));
+
 // teamwork's hook wrapper needs its engine and node only; send and reply start the recorded codex.
 test('doctor: teamwork says what a missing recorded node or codex stops', () => withXdg((dir) => {
   const home = path.join(dir, 'codex');

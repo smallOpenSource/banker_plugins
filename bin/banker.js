@@ -424,6 +424,29 @@ function doctorTeamwork(base) {
   if (!rules.startsWith('# teamwork ')) log(`  ⚠ ${path.join(base, 'rules', 'teamwork.rules')} was not written by teamwork; teamwork leaves it as it is and asks for approval on every call`);
 }
 
+/* ---------- what stays after uninstall ---------- */
+// in-korean's marked hooks and never-public's values live in the user's own settings files, outside the plugin and the
+// npm package, so neither uninstall nor plugin removal takes them out. One line names them, so `off` can run first.
+async function leftoverNote() {
+  try {
+    const tc = await loadTelemetry();
+    const claude = process.env.CLAUDE_CONFIG_DIR ? path.resolve(process.env.CLAUDE_CONFIG_DIR) : path.join(homeDir(), '.claude');
+    const codex = codexBase('user');
+    const hooks = [path.join(claude, 'settings.json'), path.join(codex, 'hooks.json')].filter((f) => tc.readRegular(f).includes('# banker:in-korean'));
+    const values = [path.join(claude, 'settings.json'), path.join(codex, 'config.toml'), path.join(tc.configDir(), 'config.json')]
+      .filter((f) => fs.existsSync(`${f}.never-public.json`));
+    return leftoverLine(hooks, values);
+  } catch {
+    return ''; // a note only: never stops the uninstall
+  }
+}
+function leftoverLine(hooks, values) {
+  const parts = [];
+  if (hooks.length) parts.push(`in-korean hooks in ${hooks.join(', ')} (run in-korean off first)`);
+  if (values.length) parts.push(`never-public values in ${values.join(', ')} (run never-public off first)`);
+  return parts.length ? `  ⚠ these stay after uninstall: ${parts.join('; ')}` : '';
+}
+
 /* ---------- uninstall ---------- */
 function uninstallClaude(dryRun) {
   log('• Claude Code uninstall:');
@@ -713,6 +736,8 @@ async function main() {
       uninstallCodex(a.dryRun, a.scopeExplicit ? [a.scope] : ['user', 'project']);
       if (!a.scopeExplicit || a.scope === 'user') { await uninstallCodexHooks(a.dryRun); await uninstallTeamwork(a.dryRun); }
     }
+    const left = await leftoverNote();
+    if (left) warn(left);
     log('done.');
     return;
   }

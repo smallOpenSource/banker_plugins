@@ -4,7 +4,7 @@ banker 구성요소의 이력표입니다.
 릴리스마다 갱신합니다.
 
 - 기준: 0.31.0 (2026-11-26)
-- 구성: 스킬 77개, 커맨드 2개, 즉시명령 2개 (모두 81개)
+- 구성: 스킬 79개, 커맨드 2개, 즉시명령 2개 (모두 83개)
 - 0.18.1 은 GitHub 와 Claude 마켓플레이스로만 나왔습니다. npm 에는 게시하지 않았고, npm 에서는 0.18.0 다음이 0.19.0 입니다.
 - 0.20.3 과 0.20.4 도 GitHub 와 Claude 마켓플레이스로만 나왔습니다. npm 에는 게시하지 않았고, npm 에서는 0.20.2 다음이 0.20.5 입니다.
 - 0.23.1 도 GitHub 와 Claude 마켓플레이스로만 나왔습니다. npm 에는 게시하지 않았고, npm 에서는 0.23.0 다음이 0.23.2 입니다.
@@ -159,6 +159,8 @@ npm 묶음에서 빠지는 시험 파일 등은 세지 않습니다.
 | 79 | `video-gen` | 2026-11-10 | 0.28.0 | 2026-11-19 | 0.29.0 | 스킬 | 마지막 업데이트는 일괄 수정(21개 동시): fix(theme-selection, setup-omc-hud, setup-bypass-permissions, progress, ultra-chain, hooks 외 스킬 20개): realpath 가 argv[1] 을 읽지 못하면 실행 판정이 false(video-gen, wbs-gen, wide-pptx 는 null)를 돌려 명령이 아무것도 안 하고 종료 0 하던 것 - realpath 가 실패하면 resolve 비교로(93bb799, ed39118 과 같은 방식), 대상은 31개 파일의 invokedDirectly 와 그 꼴, Codex progress, codex-bypass, codex-status-line 의 same, 시험 고정 파일 셋. 정본을 고치고 sync-adapter(curate, serve, gate-evidence, payload-scan)와 sync-codex-plugin(append_wiki, setup-omx-hud 사본, codex/hooks.json)으로 맞춤. 훅 4개(obsidize-hook, ralph-continue-codex, stop-codex, update-notify)가 바뀌어 banker-hooks-rev 가 c828964dc68e 에서 cc0b4f7d4e17 로 바뀜(Codex 플러그인 사용자는 다음 세션에 /hooks 신뢰를 다시 받음). argv[1] 의 realpath 만 실패하게 하는 미리 읽기 고정 파일 realpath-fails.mjs 와, argv[1] 을 import.meta.url 과 대는 추적 파일 67개를 모두 두 번 실행해 종료 코드와 출력이 같은지 보는 entry-realpath.test.mjs(새 명령 파일이 표에 없으면 실패) |
 | 80 | `presentation-graphic-gen` | 2026-11-18 | 0.29.0 | 2026-11-19 | 0.29.1 | 스킬 |  |
 | 81 | `transfer-string` | 2026-11-25 | 0.30.0 | 2026-11-26 | 0.31.0 | 스킬 |  |
+| 82 | `never-public` | 2026-11-26 | 0.32.0 | 2026-11-26 | 0.32.0 | 스킬 |  |
+| 83 | `in-korean` | 2026-11-26 | 0.32.0 | 2026-11-26 | 0.32.0 | 스킬 |  |
 
 ## 삭제와 개명 이력
 
