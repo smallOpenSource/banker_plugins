@@ -7,8 +7,9 @@
  *
  * Users:
  *  - bin/banker.js `banker setup --claude` uninstalls the user and local scope installs and reports each one.
- *  - hooks/update-notify.mjs (Claude Code SessionStart) says once, with the command, that such an install is there.
- *    It never uninstalls: a hook has five seconds and must not change the user's setup.
+ *  - hooks/retired-notify.mjs (Claude Code SessionStart, hooks/hooks.json only) says once, with the command, that
+ *    such an install is there. It never uninstalls: a hook has five seconds and must not change the user's setup.
+ *    No Codex hook imports this file, so the Codex hooks' banker-hooks-rev does not change with it.
  *  - skills/update-banker tells the same steps after the Claude channel.
  * Only local files are read: installed_plugins.json under the Claude config folder (CLAUDE_CONFIG_DIR or ~/.claude).
  * No network. A missing or unreadable file means nothing is installed.
@@ -71,6 +72,17 @@ export function commandText(step) {
   return step.args.includes('user') || !step.cwd ? cmd : `${step.cwd} 에서 ${cmd}`;
 }
 
+// What banker does with the installs of one plugin: the user and local ones are uninstalled by setup --claude and
+// update-banker; a project or managed one is left to the user.
+function whoRemoves(steps) {
+  const cmds = (list) => list.map((st) => commandText(st)).join(', ');
+  const mine = steps.filter((st) => st.run), theirs = steps.filter((st) => !st.run);
+  const out = [];
+  if (mine.length) out.push(`banker setup --claude 나 /banker:update-banker 가 플러그인째 지웁니다. 바로 지우려면 ${cmds(mine)} 를 실행하십시오`);
+  if (theirs.length) out.push(`${theirs.map((st) => st.args.at(-1)).join(', ')} 범위는 banker 가 지우지 않습니다. 직접 지우려면 ${cmds(theirs)} 를 실행하십시오`);
+  return out.join('. ');
+}
+
 // The notice for the installs, or ''.
 export function retiredNote(installs) {
   if (!installs.length) return '';
@@ -78,10 +90,8 @@ export function retiredNote(installs) {
   for (const i of installs) byId.set(i.id, [...(byId.get(i.id) || []), i]);
   return [...byId].map(([id, list]) => {
     const r = RETIRED.find((x) => x.id === id);
-    const cmds = list.map((i) => commandText(uninstallStep(i))).join(', ');
     return `banker: 설치된 ${id} 의 ${r.skills.join(', ')} 은 효과가 없어 banker 가 지우기로 했습니다. `
-      + `banker setup --claude 나 /banker:update-banker 가 플러그인째 지웁니다. 바로 지우려면 ${cmds} 를 실행하십시오`
-      + `(마켓플레이스 등록은 그대로 둡니다). 윤문은 /banker:${r.instead}`;
+      + `${whoRemoves(list.map((i) => uninstallStep(i)))}(마켓플레이스 등록은 그대로 둡니다). 윤문은 /banker:${r.instead}`;
   }).join('\n');
 }
 

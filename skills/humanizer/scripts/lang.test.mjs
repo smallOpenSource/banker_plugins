@@ -24,7 +24,7 @@ test('English, German, French, Spanish by their function words; other Latin text
   assert.deepEqual(pick('Dieses Werkzeug ist nicht nur schnell, es ist auch ein Zeugnis für die Entwicklung der Software.'), ['de', 'general', false]);
   assert.deepEqual(pick("Cet outil est un témoignage de l'évolution du logiciel et il est rapide pour les utilisateurs."), ['fr', 'general', false]);
   assert.deepEqual(pick('Esta herramienta es un testimonio de la evolución del software y es rápida para los usuarios.'), ['es', 'general', false]);
-  assert.equal(latinLang(['Xyzzy', 'plugh']), 'und-Latn');
+  assert.equal(latinLang(['Xyzzy', 'plugh']), '', 'no function word: not told');
 });
 
 test('scripts with one language each: Japanese (Kana with Kanji), Chinese, Russian, Ukrainian, Greek, Arabic, Persian', () => {
@@ -62,4 +62,12 @@ test('CLI prints one JSON line; usage and file errors exit 2', () => {
   const e = spawnSync(process.execPath, [CLI, bad], { encoding: 'utf8' });
   assert.equal(e.status, 2);
   assert.match(e.stderr, /is not UTF-8/);
+});
+
+test('a Korean text full of English terms, paths and identifiers is Korean; a short ASCII headline is English', () => {
+  assert.deepEqual(pick('React 의 useState hook 은 component state 를 관리한다. props 와 context 도 쓴다.'), ['ko', 'ko', false]);
+  assert.deepEqual(pick('설정은 /etc/banker/config.json 과 ~/.config/banker 에 있습니다. --dry-run 으로 먼저 봅니다.'), ['ko', 'ko', false]);
+  assert.deepEqual(pick('Fast install. Zero config. Works offline.'), ['en', 'en', false]);
+  assert.equal(detectLanguage('Café crème brûlée').lang, 'und-Latn', 'letters outside ASCII with no function word stay unknown');
+  assert.equal(prose('a fooBar x.y_z v2 --flag /usr/bin C:\\tmp b').replace(/\s+/g, ' ').trim(), 'a b');
 });

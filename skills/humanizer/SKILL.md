@@ -13,7 +13,7 @@ license: MIT
 ## 원칙
 
 - **뜻을 지킨다.** 내용을 더하거나 빼지 않는다. 사실, 수치, 사례, 인용을 지어내지 않는다. 개성이나 1인칭 의견을 넣지 않는다.
-- **보호 글은 그대로다.** 코드 펜스, 인라인 코드, 명령, URL, 경로, `--플래그`, 숫자, 인용은 원문 그대로 둔다. `consensus.mjs merge` 가 이것을 건드리는 제안을 버린다.
+- **보호 글은 그대로다.** 코드 펜스, 인라인 코드, 명령, URL, 경로, `--플래그`, 숫자, 인용(큰따옴표, 작은따옴표, `>` 인용 줄)은 원문 그대로 둔다. `consensus.mjs merge` 가 이것을 건드리는 제안을 버린다. 코드 파일(`.js`, `.ts`, `.json` 등)은 받지 않는다(`init` 이 종료 2).
 - **합의한 것만 고친다.** 센 투표 좌석의 과반(3표 중 2표)이 `accept` 한 수정만 적용한다. 세션 모델은 좌석의 판단을 뒤집지 않는다. 틀린 사실을 바탕으로 한 합의만 빼고, 그 까닭을 보고한다.
 - **글쓴이의 형식을 지킨다.** 존대 수준, 개조식, 표, 제목 구조, 줄바꿈은 그대로다.
 - **원본은 확인 뒤에만 바꾼다.** 사본을 다듬고, 원본 파일에 쓸지는 끝에 묻는다.
@@ -31,7 +31,7 @@ license: MIT
 | 샌드박스 | 없음 | 작업 폴더는 시스템 임시 폴더나 세션 폴더 안. 다른 곳은 `--dir` 로 세션 폴더 안을 준다 |
 
 - 좌석 표, 띄우는 방법, 좌석 지시, 기록 형식은 `<S>/references/consensus-loop.md`.
-- Codex 의 luna id: `spawn_agent` 가 받는 모델 목록(도구 설명의 모델 카탈로그)에 있는 것. `gpt-5.6-luna` 가 있으면 그것, 없으면 `gpt-6-luna`. `codex debug models` 에 있어도 그 목록에 없으면 띄울 수 없다(0.165.0 실측: `gpt-5.6-luna` 는 `codex debug models` 에만 있음). luna 가 하나도 없을 때만 가장 작은 모델을 고르게 묻는다. 물을 수 없으면 세션 모델에 노력 `low` 로 하고 보고에 적는다.
+- Codex 의 luna id: `spawn_agent` 가 받는 모델 목록(도구 설명의 모델 카탈로그)의 luna. `gpt-5.6-luna` 가 그 목록에 있으면 그것, 없으면 그 목록의 luna 가운데 판이 가장 높은 것(0.165.0 실측: `gpt-6-luna`. `gpt-5.6-luna` 는 `codex debug models` 에만 있어 띄울 수 없음). luna 가 하나도 없을 때만 가장 작은 모델을 고르게 묻는다. 물을 수 없으면 세션 모델에 노력 `low` 로 하고 보고에 적는다.
 - Codex 의 하위 에이전트는 부모 세션의 모델 이름을 밝힌다. 그래서 Codex 는 `seats.json` 에 `"modelCheck": "none"` 을 쓴다(`consensus-loop.md`). 좌석이 다른 모델을 밝혀도 모델을 바꾸지 않는다.
 - 물을 수 없는 실행(`claude -p`, `codex exec`, 다른 스킬의 연쇄)에서는 묻지 않는다. 원본 파일은 바꾸지 않고 사본 경로를 보고한다.
 
@@ -42,13 +42,13 @@ license: MIT
 | `node "<S>/scripts/lang.mjs" <파일>` | 글의 언어와 기준(`ko`, `en`, `general`), 섞임(`mixed`) | 0, 2 |
 | `node "<S>/scripts/consensus.mjs" init [--from <파일>] [--dir <폴더>]` | 작업 폴더를 만들고 원본을 `text.<확장자>` 로 복사 | 0, 2 |
 | `node "<S>/scripts/consensus.mjs" merge <회차 폴더> --root <작업 폴더>` | 제안 좌석 답을 후보로 모음(`candidates.json`) | 0, 센 좌석 부족 1, 2 |
-| `node "<S>/scripts/consensus.mjs" tally <회차 폴더> --root <작업 폴더> --apply [--dry-run]` | 투표 집계, 채택 적용, 기록(`round.json`, `decided.json`) | 0, 1, 2 |
-| `node "<S>/scripts/apply-fix.mjs" <accepted.json> --root <작업 폴더> [--dry-run]` | 채택 목록 적용(사실 오류로 뺀 합의가 있을 때) | 0, 2 |
+| `node "<S>/scripts/consensus.mjs" tally <회차 폴더> --root <작업 폴더> --apply [--dry-run] [--exclude <id,...>]` | 투표 집계, 채택 적용, 기록(`round.json`, `decided.json`). `--exclude` 는 사실 오류로 뺄 합의 | 0, 1, 2 |
+| `node "<S>/scripts/apply-fix.mjs" <accepted.json> --root <작업 폴더> [--dry-run]` | 채택 목록 적용(`tally --apply` 가 부름) | 0, 2 |
 
 ## 절차
 
 ### 1. 글 받기
-- 파일 경로를 받았으면 `node "<S>/scripts/consensus.mjs" init --from <파일>` 을 실행한다. `work <작업 폴더>` 와 `text <글 파일>` 이 나온다.
+- 파일 경로를 받았으면 `node "<S>/scripts/consensus.mjs" init --from <파일>` 을 실행한다. `work <작업 폴더>` 와 `text <글 파일>` 이 나온다. 글은 UTF-8(BOM 있음, 없음)이나 BOM 이 있는 UTF-16 이어야 하고, 적용은 같은 인코딩으로 쓴다. 그 밖의 인코딩은 `init` 이 종료 2 와 까닭으로 멈춘다.
 - 붙여 넣은 글이면 `init` 으로 작업 폴더만 만들고, 그 글을 손대지 않고 `<작업 폴더>/text.md` 에 쓴다.
 - 글쓴이의 다른 글(문체 표본)을 받았으면 작업 폴더에 `sample.md` 로 두고 좌석 지시 끝에 "문체 참고: <경로>" 를 덧붙인다.
 

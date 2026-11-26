@@ -17,22 +17,33 @@
 
 - 모델은 절차 4단계에서 고른 낮은 등급 모델, 노력 medium. 좌석은 서로의 결과를 보지 않는다.
 - 한 회차에 제안 좌석 3개, 투표 좌석 3개(제안 좌석과 다른 새 좌석).
-- 좌석은 자기 모델 id 를 결과에 적는다. 기록에 좌석마다 모델 id 를 남기고, 고른 모델과 다른 좌석은 세지 않는다.
+- 좌석은 자기 모델 id 를 결과에 적는다. 기록에 좌석마다 모델 id 를 남기고, Claude Code 에서는 고른 모델과 다른 좌석은 세지 않는다.
+- Codex 의 하위 에이전트는 자기 모델이 아니라 부모 세션의 모델 이름을 밝힌다(0.165.0 실측: `gpt-6-luna` 로 띄운 좌석이 `MODEL: gpt-6.1-sol`). 그래서 Codex 는 `seats.json` 에 `"modelCheck": "none"` 을 쓴다. 그러면 `MODEL:` 줄은 기록만 하고, 좌석의 모델은 `spawn_agent` 에 준 값이다. 이 값이 없으면 luna 좌석을 모두 세지 않아 `merge` 가 종료 1 로 끝나고, 다시 띄워도 같다.
 
 | 런타임 | 좌석 띄우기 |
 |---|---|
 | Claude Code | `Agent` 도구로 좌석마다 새 에이전트. `model` 에 `sonnet` 또는 `haiku`, 노력 medium. 이 대화의 맥락을 넘기지 않고 아래 지시와 파일 경로만 준다 |
-| Codex | 하위 에이전트를 `model` 과 `model_reasoning_effort: medium` 으로 띄우거나, 좌석마다 `codex exec -m <id> -c model_reasoning_effort=medium "<지시>"` |
+| Codex | `spawn_agent` 를 `agent_type` 없이, `model` 에 luna id, `reasoning_effort: "medium"`, `message` 에 좌석 지시. 이 대화는 넘기지 않는다: multi-agent v2 는 `fork_turns: "none"`(이 값이 있어야 `model` 과 `reasoning_effort` 를 받음), v1 은 `fork_context` 를 주지 않는다. `wait_agent` 로 답을 받고 `close_agent` 로 닫는다. luna id 는 `spawn_agent` 가 받는 모델 목록(도구 설명의 모델 카탈로그)의 luna. `gpt-5.6-luna` 가 그 목록에 있으면 그것, 없으면 그 목록의 luna 가운데 판이 가장 높은 것(0.165.0 실측: `gpt-6-luna`. `gpt-5.6-luna` 는 `codex debug models` 에만 있어 띄울 수 없음). `spawn_agent` 가 없을 때만 좌석마다 `codex exec -m <codex debug models 의 id> -c model_reasoning_effort=medium -s read-only --skip-git-repo-check - < <지시 파일>` |
 
 ## 한 회차
 
 `C="<S>/scripts/consensus.mjs"`, `P=<대본 폴더>/polish`, `R=$P/round-NN`. 모으기, 집계, 적용, 기록은 `consensus.mjs` 가 한다(humanizer 와 같은 파일, 정본은 humanizer).
 처음 한 번 `$P/seats.json` 에 좌석을 쓴다(모델은 4단계에서 고른 것, 노력 `medium`).
 
+Claude Code:
+
 ```json
 { "scope": "full",
   "proposers": [{ "seat": "p1", "model": "<모델>", "effort": "medium" }, { "seat": "p2", "model": "<모델>", "effort": "medium" }, { "seat": "p3", "model": "<모델>", "effort": "medium" }],
   "voters":    [{ "seat": "v1", "model": "<모델>", "effort": "medium" }, { "seat": "v2", "model": "<모델>", "effort": "medium" }, { "seat": "v3", "model": "<모델>", "effort": "medium" }] }
+```
+
+Codex(`"modelCheck": "none"` 을 꼭 넣는다):
+
+```json
+{ "scope": "full", "modelCheck": "none",
+  "proposers": [{ "seat": "p1", "model": "<luna id>", "effort": "medium" }, { "seat": "p2", "model": "<luna id>", "effort": "medium" }, { "seat": "p3", "model": "<luna id>", "effort": "medium" }],
+  "voters":    [{ "seat": "v1", "model": "<luna id>", "effort": "medium" }, { "seat": "v2", "model": "<luna id>", "effort": "medium" }, { "seat": "v3", "model": "<luna id>", "effort": "medium" }] }
 ```
 
 1. 제안: 좌석 3개가 대상 파일을 스스로 읽고 JSON 배열을 낸다. 답을 그대로 `$R/p1.md`, `$R/p2.md`, `$R/p3.md` 에 쓴다.
@@ -42,7 +53,7 @@
    "kind": "어색함|맞춤법|띄어쓰기|번역투|중복|어순", "reason": "한 줄" }]
 ```
 
-2. 모으기: `node "$C" merge "$R" --root <대본 폴더>`. 같은 `file` 과 `from` 의 제안은 한 후보로 합치고, `to` 가 여럿이면 모두 후보의 안으로 둔다(`$R/candidates.json`). 이미 결정한 항목(앞 회차의 채택과 기각, `$P/decided.json`)과 같은 `from`, 앞 회차의 채택을 되돌리는 제안, `from` 이 정확히 한 번 나오지 않는 제안, 숫자와 코드와 경로와 인용(대본 파일)을 바꾸는 제안은 까닭과 함께 버린다.
+2. 모으기: `node "$C" merge "$R" --root <대본 폴더>`. 같은 `file` 과 `from` 의 제안은 한 후보로 합치고, `to` 가 여럿이면 모두 후보의 안으로 둔다(`$R/candidates.json`). 이미 결정한 항목(앞 회차의 채택과 기각, `$P/decided.json`)과 같은 `from`, 앞 회차의 채택을 되돌리는 제안, `from` 이 정확히 한 번 나오지 않는 제안, 숫자와 코드와 경로와 인용(대본 파일의 큰따옴표, 작은따옴표, `>` 인용 줄)을 바꾸는 제안은 까닭과 함께 버린다. `to` 가 `from` 의 절반보다 짧거나 두 배보다 긴 후보에는 `"flag": "large-change"` 가 붙는다. 투표 좌석은 `candidates.json` 만 읽는다(제안한 좌석은 `proposed-by.json` 에 따로).
 3. 투표: 후보가 있으면 새 좌석 3개가 후보마다 `accept` 나 `reject` 를 내고, 고르고 싶은 안이 있으면 `preferredTo` 를 낸다. 답을 `$R/v1.md` 등에 쓴다.
 
 ```json
@@ -52,10 +63,11 @@
 4. 결정과 적용: `node "$C" tally "$R" --root <대본 폴더> --apply --dry-run` 으로 본 뒤 `--dry-run` 없이 한 번 더.
    - 3표 중 2표 이상 `accept` 면 채택. `to` 는 채택표의 `preferredTo` 가운데 가장 많은 것(같으면 처음 제안). 그 밖은 기각.
    - 같은 자리에 겹치는 채택 항목은 `accept` 가 많은 쪽(같으면 낮은 id)만 적용하고 다른 쪽은 보류한다. 보류는 다음 회차에 다시 볼 수 있다.
-   - 합의가 틀린 사실을 바탕으로 하면(예: 원문에 없는 글을 있다고 봄, 문법 규칙을 잘못 앎) `--apply` 없이 집계한 뒤 그 합의를 `$R/accepted.json` 에서 빼고 `node "<S>/scripts/apply-fix.mjs" "$R/accepted.json" --root <대본 폴더>` 로 적용한다. 까닭을 적는다. 그 밖의 이유로 합의를 뒤집지 않는다.
+   - 합의가 틀린 사실을 바탕으로 하면(예: 원문에 없는 글을 있다고 봄, 문법 규칙을 잘못 앎) `--dry-run` 결과에서 그 후보 id 를 보고 `tally ... --apply --exclude <id>` 로 집계한다. 그 후보는 적용하지 않고 `excluded` 로 기록되며 다시 제안되지 않는다. 까닭을 보고에 적는다. 그 밖의 이유로 합의를 뒤집지 않는다.
+   - 한 회차는 한 번만 집계한다. `round.json` 이 있으면 `tally` 가 종료 2 로 거부한다.
    - 적용에서 `from` 이 정확히 한 번 나오지 않으면 SKIP 과 까닭이 나온다. SKIP 은 결정 목록에 들어가지 않아 다음 회차에 다시 볼 수 있다.
-5. 기록: `tally` 가 `$R/round.json`(좌석별 모델과 노력, 좌석이 밝힌 모델, 후보별 표와 결정, 적용 수, SKIP, 새 합의 수)과 `$P/decided.json` 을 쓴다.
-   - 답에 JSON 배열이 없거나 `MODEL:` 줄이 고른 모델과 다른 계열인 좌석은 세지 않는다. 센 좌석이 3개보다 적으면 `merge`, `tally` 가 종료 1 과 다시 띄울 좌석을 낸다.
+5. 기록: `tally` 가 `$R/round.json`(좌석별 모델과 노력, 좌석이 밝힌 모델, 후보별 표와 결정, 적용 수, SKIP, 새 합의 수)과 `$P/decided.json` 을 쓴다. 새 합의 수는 실제로 적용한 수다(채택했으나 SKIP 된 것은 세지 않음).
+   - 답에 JSON 배열이 없거나, `MODEL:` 줄이 고른 모델과 다른 계열인(`"modelCheck": "none"` 이면 보지 않음) 좌석은 세지 않는다. 센 좌석이 3개보다 적으면 `merge`, `tally` 가 종료 1 과 다시 띄울 좌석을 낸다. 그 좌석만 같은 모델과 노력으로 다시 띄운다.
    - 다음 회차의 좌석에게 `$P/decided.json` 을 읽게 해 결정한 항목을 다시 제안하지 않게 한다.
 
 ## 끝
@@ -81,7 +93,7 @@
 
 ```text
 너는 한국어 발표 원고의 교정 심사 위원이다. 아래 후보마다 원문 파일을 직접 열어 앞뒤를 보고 판단하라: <파일 목록>.
-뜻이 바뀌거나 사실이 더해지면 reject. 더 자연스럽고 뜻이 같으면 accept. 여러 안이 있으면 preferredTo 로 하나를 골라라.
+뜻이 바뀌거나 사실이 더해지면 reject. flag 가 large-change 인 후보는 내용이 빠지거나 더해지지 않았는지 특히 본다. 더 자연스럽고 뜻이 같으면 accept. 여러 안이 있으면 preferredTo 로 하나를 골라라.
 후보는 <대본 폴더>/polish/round-NN/candidates.json 의 candidates(id, file, from, to 안들, reason)다.
 결과는 JSON 배열 하나만: [{"id","vote","preferredTo","reason"}]. 맨 끝 줄에 MODEL: <너의 모델 id> 를 써라.
 ```

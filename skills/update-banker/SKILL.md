@@ -158,14 +158,20 @@ console.log(e.length?e.map(x=>x.scope+(x.projectPath?' '+x.projectPath:'')).join
 
 | 범위 | 처리 |
 |---|---|
-| `user` | 홈 폴더에서 `claude plugin uninstall humanize-korean@im-not-ai --scope user` |
-| `local` | 그 줄의 프로젝트 폴더에서 `claude plugin uninstall humanize-korean@im-not-ai --scope local`(폴더가 없으면 명령만 보고) |
+| `user` | 홈 폴더에서 `in60 claude plugin uninstall humanize-korean@im-not-ai --scope user` |
+| `local` | 그 줄의 프로젝트 폴더에서 `in60 claude plugin uninstall humanize-korean@im-not-ai --scope local`(폴더가 없으면 명령만 보고) |
 | `project` | 지우지 않는다. 그 프로젝트의 공유 설정(`.claude/settings.json`, 대개 git 에 있음)을 바꾸기 때문이다. 명령(`<폴더> 에서 ... --scope project`)만 보고한다 |
 | `managed` | 지우지 않는다. 관리자 설정이다. 그 사실만 보고한다 |
 
+- `in60` 은 0단계의 `in15` 와 같고 60초를 기다린다(`banker setup --claude` 와 같은 제한). 끝나지 않으면 멈췄다고 보고하고 다음 단계로 간다. 실측(가짜 HOME, 네트워크 없음)은 0.5초였다.
+
+```bash
+in60() { "$@" & p=$!; ( sleep 60 && kill "$p" ) > /dev/null 2>&1 & k=$!; wait "$p" 2>/dev/null; r=$?; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null; [ "$r" = 143 ] && echo "60초 안에 끝나지 않아 멈춤"; return "$r"; }
+```
+
 - `claude plugin marketplace remove im-not-ai` 는 하지 않는다. 마켓플레이스 등록은 그대로 둔다.
 - 지운 뒤 위 명령을 다시 돌려 그 범위가 사라졌는지 본다(관측으로 판정). 종료 코드로 판정하지 않는다.
-- `banker setup --claude` 도 같은 일을 하고, 이 단계 없이 자동 업데이트로 새 판을 받은 사용자에게는 SessionStart 훅이 이 플러그인이 있을 때 한 번 지우는 명령을 알린다(훅은 지우지 않는다).
+- `banker setup --claude` 도 같은 일을 하고, 이 단계 없이 자동 업데이트로 새 판을 받은 사용자에게는 Claude Code 의 SessionStart 훅(`hooks/retired-notify.mjs`)이 이 플러그인이 있을 때 한 번 지우는 명령을 알린다(훅은 지우지 않는다).
 - Codex 에는 해당이 없다. 그 저장소의 Codex 설치(`install.sh --codex-only`)는 `~/.codex/skills/humanize-korean` 하나뿐이고 세 스킬이 없다.
 
 ### 3. Codex 채널

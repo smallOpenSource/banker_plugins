@@ -6,8 +6,10 @@
 // Prints one JSON object: { lang, name, criteria, mixed, shares }. lang is a BCP 47 code (ko, en, ja, zh, ru, de, ...)
 // or und-<script> when only the script is known; criteria is ko (references/criteria-ko.md), en
 // (references/patterns-en.md) or general (references/criteria-general.md). Code fences, inline code and URLs are left
-// out before counting. Each run of letters of one script counts once (a word, or a stretch of Hangul or Han), so a
-// Korean text with English terms in it stays Korean. mixed is true when a second language has 30% of the runs or more.
+// out before counting, and so are paths, --flags and identifiers. Each run of letters of one script counts once (a
+// word, or a stretch of Hangul or Han). Latin words whose language the function words do not tell are loanwords of
+// the text's other language, so a Korean text full of English terms stays Korean; a short Latin text of ASCII words
+// alone is English. mixed is true when a second language has 30% of the runs or more.
 // Exit codes: 0 done, 2 usage or file error.
 import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -36,12 +38,16 @@ const NAMES = {
   it: 'italiano', nl: 'Nederlands',
 };
 
-/** The text without code fences, inline code and URLs. */
+/** The text without code fences, inline code, URLs, paths, --flags and identifiers (camelCase, dotted, snake_case,
+ * letters with digits): those are code, not the language of the prose. */
 export function prose(text) {
   return String(text)
     .replace(/^[ \t]{0,3}(```|~~~)[^\n]*\n[\s\S]*?(?:^[ \t]{0,3}\1[^\n]*$|(?![\s\S]))/gm, ' ')
     .replace(/`[^`\n]+`/g, ' ')
-    .replace(/\bhttps?:\/\/\S+/g, ' ');
+    .replace(/\bhttps?:\/\/\S+/g, ' ')
+    .replace(/(?<![\w.~])(?:~|\.{1,2})?\/[\w.~-]+(?:\/[\w.~-]*)*|\b[A-Za-z]:\\\S+/g, ' ')
+    .replace(/(?<![\w-])--?[A-Za-z][\w-]*/g, ' ')
+    .replace(/\b[A-Za-z0-9]*(?:[a-z][A-Z]|[A-Za-z][._][A-Za-z0-9]|[A-Za-z][0-9]|[0-9][A-Za-z])[\w.]*/g, ' ');
 }
 
 const scriptOf = (ch) => (SCRIPTS.find(([, re]) => re.test(ch)) || [''])[0];
@@ -60,10 +66,11 @@ export function runs(text) {
   return out;
 }
 
-/** The language of the Latin-script words: a code from STOPWORDS, or und-Latn when fewer than two words match. */
+/** The language of the Latin-script words by their function words: a code from STOPWORDS, or '' when fewer than two
+ * words match (terms and short headlines). */
 export function latinLang(words) {
   const lower = words.map((w) => w.toLowerCase());
-  let best = 'und-Latn', hits = 1;
+  let best = '', hits = 1;
   for (const [lang, list] of Object.entries(STOPWORDS)) {
     const set = new Set(list.split(' '));
     const n = lower.filter((w) => set.has(w)).length;
@@ -73,11 +80,24 @@ export function latinLang(words) {
 }
 
 function langOfScript(script, texts) {
-  if (script === 'Latin') return latinLang(texts);
+  if (script === 'Latin') return latinLang(texts) || UNSURE;
   const all = texts.join('');
   if (script === 'Cyrillic') return /[іїєґ]/i.test(all) ? 'uk' : 'ru';
   if (script === 'Arabic') return /[پچژگ]/.test(all) ? 'fa' : 'ar';
   return SCRIPT_LANG[script] || `und-${script}`;
+}
+
+const UNSURE = '?Latn';
+
+// Latin words no language could be told from are loanwords of the other language of the text (React, hook, state in a
+// Korean text); in a text of them alone they are English when every letter is ASCII, else und-Latn.
+function placeUnsure(shares, latinWords) {
+  const share = shares[UNSURE];
+  if (share === undefined) return;
+  delete shares[UNSURE];
+  const host = Object.entries(shares).filter(([l]) => !l.startsWith('und')).sort((a, b) => b[1] - a[1])[0];
+  const to = host ? host[0] : latinWords.every((w) => /^[A-Za-z]+$/.test(w)) ? 'en' : 'und-Latn';
+  shares[to] = Math.round(((shares[to] || 0) + share) * 1000) / 1000;
 }
 
 /** { lang, name, criteria, mixed, shares } of a text. */
@@ -97,6 +117,7 @@ export function detectLanguage(text) {
     const lang = langOfScript(script, texts);
     shares[lang] = Math.round(((shares[lang] || 0) + texts.length / rs.length) * 1000) / 1000;
   }
+  placeUnsure(shares, by.get('Latin') || []);
   const ranked = Object.entries(shares).sort((a, b) => b[1] - a[1]);
   const lang = ranked[0][0];
   const criteria = lang === 'ko' ? 'ko' : lang === 'en' ? 'en' : 'general';

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { decide, findArray, modelMismatch, parseArgs, parseReply, protectedChange, readSeats, run } from './consensus.mjs';
+import { decide, findArray, largeChange, modelMismatch, parseArgs, parseReply, protectedChange, readSeats, run } from './consensus.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'humanizer-consensus-test-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
@@ -83,7 +83,8 @@ test('merge groups the same from into one candidate, keeps every to, and drops w
   assert.equal(c.round, 1);
   assert.equal(c.candidates.length, 1);
   assert.deepEqual(c.candidates[0].to, [EDIT.to, EDIT2.to]);
-  assert.deepEqual(c.candidates[0].by, ['p1', 'p2', 'p3']);
+  assert.equal(c.candidates[0].by, undefined, 'the voters do not see who proposed it');
+  assert.deepEqual(JSON.parse(readFileSync(join(round, 'proposed-by.json'), 'utf8')), { 1: ['p1', 'p2', 'p3'] });
   const PROT = 'changes protected text (code, URL, path, flag, number or quote)';
   assert.deepEqual(c.dropped.map((d) => d.reason), [PROT, 'from not found', 'file not found or outside the root', PROT]);
   assert.deepEqual(c.proposers.map((p) => [p.seat, p.model, p.effort, p.reported, p.items, p.counted]),
@@ -219,4 +220,71 @@ test('modelCheck none: a reply naming another model still counts and the name is
   assert.deepEqual(c.proposers.map((p) => [p.counted, p.reported, p.note]), Array(3).fill([true, 'gpt-6.1-sol', 'model from the spawn call (modelCheck none)']));
   const { round: r2 } = work('badcheck', { ...SEATS, modelCheck: 'maybe' });
   assert.throws(() => readSeats(r2), /modelCheck must be reply or none/);
+});
+
+test('single quotes and quote block lines are protected; an apostrophe inside a word is not a quote', () => {
+  const text = "그는 ‘중요한 말’을 했다. 'hello there' she said. It's fine and don't worry.\n> 인용한 문장은 그대로 둔다.\n끝.\n";
+  const at = (s) => text.indexOf(s);
+  assert.match(protectedChange(text, at('‘중요한 말’을'), '‘중요한 말’을', '‘중대한 말’을'), /changes protected text/);
+  assert.match(protectedChange(text, at("'hello there' she"), "'hello there' she", "'hi there' she"), /changes protected text/);
+  assert.equal(protectedChange(text, at("'hello there' she"), "'hello there' she said", "'hello there' he said"), '');
+  assert.equal(protectedChange(text, at("It's fine"), "It's fine and don't worry", "It's fine; don't worry"), '', 'apostrophes are no quotes');
+  assert.match(protectedChange(text, at('인용한 문장은'), '인용한 문장은', '인용 문장은'), /inside a quote block/);
+  assert.equal(protectedChange(text, at('끝.'), '끝.', '끝이다.'), '');
+});
+
+test('an edit inside an accepted edit that brings back the old text is an undo, also in part', () => {
+  const { dir, round } = work('undo-part');
+  writeFileSync(join(dir, 'text.md'), 'A X C 는 그대로.\n');
+  writeFileSync(join(dir, 'decided.json'), JSON.stringify([{ round: 1, file: 'text.md', from: 'A B C', to: 'A X C', decision: 'accepted' }]));
+  for (const [s, m] of [['p1', 'claude-sonnet-5-5'], ['p2', 'claude-haiku-5-5'], ['p3', 'claude-sonnet-5-5']]) put(round, s, reply([{ file: 'text.md', from: 'X', to: 'B' }], m));
+  run(['merge', round, '--root', dir]);
+  assert.match(JSON.parse(readFileSync(join(round, 'candidates.json'), 'utf8')).dropped[0].reason, /undoes an edit accepted in round 1/);
+});
+
+test('a to under half or over twice its from is flagged large-change for the voters', () => {
+  assert.equal(largeChange({ from: '이 문장은 꽤 긴 문장입니다', to: ['짧다'] }), true);
+  assert.equal(largeChange({ from: '이 문장은 꽤 긴 문장입니다', to: ['이 문장은 꽤 긴 글입니다'] }), false);
+  assert.equal(largeChange({ from: '짧다', to: ['아주 길게 늘어난 문장입니다'] }), false, 'a from under 10 characters is not judged');
+});
+
+function tallied(name) {
+  const { dir, round } = work(name);
+  const other = { file: 'text.md', from: '설정은', to: '설정을' };
+  writeFileSync(join(dir, 'text.md'), TEXT + '설정은 따로 둔다.\n');
+  for (const [s, m] of [['p1', 'claude-sonnet-5-5'], ['p2', 'claude-haiku-5-5'], ['p3', 'claude-sonnet-5-5']]) put(round, s, reply([EDIT, other], m));
+  run(['merge', round, '--root', dir]);
+  for (const [s, m] of [['v1', 'claude-sonnet-5-5'], ['v2', 'claude-haiku-5-5'], ['v3', 'claude-sonnet-5-5']]) put(round, s, reply([{ id: 1, vote: 'accept' }, { id: 2, vote: 'accept' }], m));
+  return { dir, round };
+}
+
+test('--exclude takes an accepted candidate out before applying; it is recorded as excluded and not proposed again', () => {
+  const { dir, round } = tallied('exclude');
+  run(['tally', round, '--root', dir, '--apply', '--exclude', '2']);
+  const rec = JSON.parse(readFileSync(join(round, 'round.json'), 'utf8'));
+  assert.deepEqual(rec.candidates.map((c) => c.decision), ['accepted', 'excluded']);
+  assert.equal(rec.newConsensus, 1);
+  assert.match(readFileSync(join(dir, 'text.md'), 'utf8'), /설정은 따로 둔다/);
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, 'decided.json'), 'utf8')).map((d) => d.decision), ['accepted', 'excluded']);
+  assert.throws(() => run(['tally', round, '--root', dir, '--apply']), /tallied already/, 'a second tally is refused');
+  const { dir: d2, round: r2 } = tallied('exclude-bad');
+  assert.throws(() => run(['tally', r2, '--root', d2, '--exclude', '9']), /candidate 9 is not accepted/);
+  assert.throws(() => parseArgs(['tally', r2, '--exclude']), /--exclude needs a value/);
+  assert.throws(() => run(['tally', r2, '--root', d2, '--exclude', 'x']), /--exclude takes candidate ids/);
+});
+
+test('with --apply, accepted edits that all SKIP are no new consensus (the loop does not run to the cap for nothing)', () => {
+  const { dir, round } = tallied('skipall');
+  writeFileSync(join(dir, 'text.md'), '다른 글이 되었다.\n'); // the file changed after merge: nothing can apply
+  const lines = run(['tally', round, '--root', dir, '--apply']);
+  const rec = JSON.parse(readFileSync(join(round, 'round.json'), 'utf8'));
+  assert.equal(rec.candidates.filter((c) => c.decision === 'accepted').length, 2);
+  assert.deepEqual([rec.applied, rec.skipped.length, rec.newConsensus], [0, 2, 0]);
+  assert.match(lines.at(-1), /^round 1: 0 new consensus/);
+});
+
+test('init refuses a code file: humanizer polishes prose', () => {
+  const src = join(TMP, 'app.js');
+  writeFileSync(src, "const s = 'hi';\n");
+  assert.throws(() => run(['init', '--from', src]), /is a code file; humanizer polishes prose/);
 });

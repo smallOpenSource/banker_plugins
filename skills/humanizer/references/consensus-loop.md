@@ -16,7 +16,7 @@
 | p3, v3 | `sonnet`, `low` | luna, `low` |
 
 - Claude Code 의 노력에는 `none` 이 없다(`low` 가 가장 낮다).
-- Codex 의 luna 는 `spawn_agent` 가 받는 모델 목록에 있는 id 를 쓴다. `gpt-5.6-luna` 가 있으면 그것, 없으면 `gpt-6-luna`(0.165.0 실측: `gpt-5.6-luna` 는 `codex debug models` 에는 있고 `spawn_agent` 목록에는 없음). `codex exec` 좌석은 `codex debug models` 의 id 를 쓴다. 그 모델의 노력 목록에 `none` 이 있을 때만 `none` 을 쓸 수 있다.
+- Codex 의 luna id 는 `spawn_agent` 가 받는 모델 목록(도구 설명의 모델 카탈로그)의 luna. `gpt-5.6-luna` 가 그 목록에 있으면 그것, 없으면 그 목록의 luna 가운데 판이 가장 높은 것(0.165.0 실측: `gpt-6-luna`. `gpt-5.6-luna` 는 `codex debug models` 에만 있어 띄울 수 없음). `codex exec` 좌석은 `codex debug models` 의 id 를 쓴다. 그 모델의 노력 목록에 `none` 이 있을 때만 `none` 을 쓸 수 있다.
 
 ### 띄우는 방법
 
@@ -59,13 +59,17 @@ Claude Code 의 예. Codex 는 모델에 luna id, 노력은 표대로, 맨 앞�
 2. 모으기: `node "$C" merge "$R" --root "$W"`. 같은 `from` 은 한 후보로 합치고, `to` 가 여럿이면 모두 후보의 안으로 둔다. 아래는 까닭과 함께 버린다(`DROP` 줄).
    - `from` 이 글에 정확히 한 번 나오지 않음
    - 앞 회차에 결정됨, 또는 앞 회차의 채택을 되돌림
-   - 보호 글을 건드림: 코드 펜스, 인라인 코드, URL, 경로, `--플래그`, 숫자, 인용(코드 파일 밖). 보호 글은 바꾸지 않고 그대로 옮겨야 한다
+   - 보호 글을 건드림: 코드 펜스, 인라인 코드, URL, 경로, `--플래그`, 숫자, 인용(큰따옴표와 작은따옴표 안의 글, `>` 로 시작하는 인용 줄). 보호 글은 바꾸지 않고 그대로 옮겨야 한다. 낱말 안의 아포스트로피(don't)는 인용이 아니다
+   - `to` 가 `from` 의 절반보다 짧거나 두 배보다 긴 후보는 버리지 않고 `"flag": "large-change"` 를 붙인다. 투표 좌석이 내용이 빠지거나 더해지지 않았는지 특히 본다
+   - 투표 좌석은 `candidates.json` 만 읽는다. 어느 좌석이 몇이나 냈는지는 `proposed-by.json` 에 따로 둔다
 3. 투표: `candidates.json` 의 후보가 있으면 투표 좌석 3개를 띄운다. 답을 `$R/v1.md` 등에 쓴다. 후보가 0건이면 투표하지 않는다.
 4. 결정과 적용: `node "$C" tally "$R" --root "$W" --apply --dry-run` 으로 본 뒤 `--dry-run` 없이 한 번 더.
    - 센 투표 좌석의 과반(3표 중 2표), 그리고 2표 이상이 `accept` 면 채택. 그 밖은 기각.
    - 채택한 글은 채택표의 `preferredTo` 가운데 가장 많은 안(같으면 먼저 나온 안).
    - 같은 자리에 겹치는 채택은 `accept` 가 많은 쪽(같으면 낮은 id)만 남고, 다른 쪽은 보류(`deferred`)다. 보류는 결정 목록에 넣지 않아 다음 회차에 다시 나올 수 있다.
-   - 합의가 틀린 사실을 바탕으로 하면(원문에 없는 글을 있다고 봄, 문법 규칙을 잘못 앎) 적용 전에 멈추고 그 후보를 `accepted.json` 에서 빼고 `apply-fix.mjs` 로 따로 적용한다. 그 까닭을 보고에 적는다. 그 밖의 이유로 합의를 뒤집지 않는다.
+   - 합의가 틀린 사실을 바탕으로 하면(원문에 없는 글을 있다고 봄, 문법 규칙을 잘못 앎) `--dry-run` 결과에서 그 후보 id 를 보고 `tally "$R" --root "$W" --apply --exclude <id>` 로 집계한다. 그 후보는 적용하지 않고 `round.json`, `decided.json` 에 `excluded` 로 남으며 다시 제안되지 않는다. 까닭을 보고에 적는다. 그 밖의 이유로 합의를 뒤집지 않는다.
+   - 한 회차는 한 번만 집계한다. `round.json` 이 있으면 `tally` 가 종료 2 로 거부한다.
+   - 새 합의 수(`newConsensus`)는 `--apply` 로 실제 적용한 수다. 채택했지만 SKIP 된 수정은 세지 않는다.
 5. 좌석을 세지 않는 경우: 답에 JSON 배열이 없음, `MODEL:` 줄이 `seats.json` 과 다른 모델 계열(예: `haiku` 좌석이 `sonnet` 이라 답함. `"modelCheck": "none"` 이면 보지 않음). 센 좌석이 3개보다 적으면 `merge`, `tally` 가 종료 1 과 다시 띄울 좌석 이름을 낸다. 그 좌석만 같은 모델과 노력으로 다시 띄워 답을 덮어쓴 뒤 같은 명령을 다시 돌린다. 모델이나 노력을 바꾸지 않는다.
 
 ## 끝
@@ -94,7 +98,7 @@ from 은 원문에서 정확히 한 번 나오는 부분이다. 짧게 잡되 �
 ```text
 너는 <언어 이름> 원어민 교열 심사 위원이다. 원문 <T> 와 후보 <R>/candidates.json 을 직접 읽어라. 기준: <기준>.
 candidates 의 후보마다 원문의 앞뒤를 보고 판단하라. to 는 고친 글의 안들이다.
-뜻이 바뀌거나, 내용이 더해지거나 빠지거나, 원문보다 어색하면 reject. 더 자연스럽고 뜻이 같으면 accept.
+뜻이 바뀌거나, 내용이 더해지거나 빠지거나, 원문보다 어색하면 reject. 더 자연스럽고 뜻이 같으면 accept. flag 가 large-change 인 후보는 내용이 빠지거나 더해지지 않았는지 특히 본다.
 accept 이고 안이 여럿이면 preferredTo 에 고른 안을 글자 그대로 옮겨라.
 파일을 고치지 마라. 결과는 JSON 배열 하나만, 후보마다 한 줄: [{"id":1,"vote":"accept","preferredTo":"...","reason":"한 줄"}].
 맨 끝 줄에 MODEL: <너의 모델 id> 를 써라.

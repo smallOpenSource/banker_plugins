@@ -29,7 +29,6 @@ export const PAYLOAD = [
   'bin/lib/telemetry-config.mjs',
   'bin/lib/codex-routes.mjs',
   'bin/lib/codex-names.mjs',
-  'bin/lib/retired-plugins.mjs',
   'hooks/update-notify.mjs',
   'hooks/update-fetch.mjs',
   'hooks/update-checkin.mjs',

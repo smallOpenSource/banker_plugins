@@ -63,6 +63,12 @@ test('the notice names the plugin, its skills, the uninstall command and humaniz
   assert.match(note, /마켓플레이스 등록은 그대로 둡니다\). 윤문은 \/banker:humanizer$/);
   assert.doesNotMatch(note, /[—–→!]/);
   assert.equal(retiredNote([]), '');
+  // project scope alone: banker leaves it, and the notice does not say setup or update-banker removes it
+  const proj = retiredNote([{ id: ID, scope: 'project', projectPath: '/p' }]);
+  assert.doesNotMatch(proj, /banker setup --claude/);
+  assert.match(proj, /project 범위는 banker 가 지우지 않습니다\. 직접 지우려면 \/p 에서 claude plugin uninstall humanize-korean@im-not-ai --scope project 를 실행하십시오/);
+  const both = retiredNote([{ id: ID, scope: 'user', projectPath: '' }, { id: ID, scope: 'project', projectPath: '/p' }]);
+  assert.match(both, /가 플러그인째 지웁니다\. 바로 지우려면 claude plugin uninstall humanize-korean@im-not-ai --scope user 를 실행하십시오\. project 범위는/);
 });
 
 test('the hook notice comes once per plugin id, and again only for an id not told before', () => {

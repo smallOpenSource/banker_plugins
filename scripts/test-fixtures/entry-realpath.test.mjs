@@ -28,6 +28,7 @@ const CASES = {
   "codex/skills/teamwork/scripts/teamwork.mjs": {},
   "hooks/obsidize-hook.mjs": HOOK,
   "hooks/ralph-continue-codex.mjs": HOOK,
+  "hooks/retired-notify.mjs": HOOK,
   "hooks/stop-codex.mjs": HOOK,
   "hooks/update-notify.mjs": HOOK,
   "scripts/test-fixtures/omc-wiki-cases.mjs": {},
@@ -124,7 +125,8 @@ function run(file, c, extraEnv) {
   mkdirSync(home);
   mkdirSync(cwd);
   const mark = join(work, "stdin.mark");
-  const env = { ...process.env, HOME: home, USERPROFILE: home, CODEX_HOME: join(home, ".codex"), BANKER_NO_UPDATE_CHECK: "1", BANKER_NO_TELEMETRY: "1", BANKER_TEST_STDIN_MARK: mark, ...extraEnv };
+  // Every config folder a command may read or write is under the temp home, never the developer's.
+  const env = { ...process.env, HOME: home, USERPROFILE: home, CODEX_HOME: join(home, ".codex"), XDG_CONFIG_HOME: join(home, ".config"), CLAUDE_CONFIG_DIR: join(home, ".claude"), APPDATA: join(home, "AppData", "Roaming"), LOCALAPPDATA: join(home, "AppData", "Local"), BANKER_NO_UPDATE_CHECK: "1", BANKER_NO_TELEMETRY: "1", BANKER_TEST_STDIN_MARK: mark, ...extraEnv };
   for (const k of ["CODEX_THREAD_ID", "TMUX", "CLAUDE_PLUGIN_ROOT", "PLUGIN_ROOT", "NODE_OPTIONS"]) delete env[k];
   try {
     const r = spawnSync(process.execPath, ["--import", PRELOAD, file, ...(c.args ?? BOGUS)], { cwd, env, input: c.input ?? "", encoding: "utf8", timeout: 60000 });

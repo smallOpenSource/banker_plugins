@@ -6,18 +6,22 @@
 //
 //   node consensus.mjs init [--from <file>] [--dir <folder>]
 //   node consensus.mjs merge <round folder> --root <dir> [--decided <file>]
-//   node consensus.mjs tally <round folder> --root <dir> [--decided <file>] [--apply] [--dry-run]
+//   node consensus.mjs tally <round folder> --root <dir> [--decided <file>] [--apply] [--dry-run] [--exclude <id,...>]
 //
 // A round folder is named round-NN. It holds seats.json (or the work folder does), one reply file per seat
 // (<seat>.md, the seat's answer as given: a JSON array and a last line MODEL: <model id>), and what this writes:
-// candidates.json (merge), accepted.json and round.json (tally). The decided list (default <round folder>/../decided.json)
+// candidates.json and proposed-by.json (merge; the voters read only candidates.json), accepted.json and round.json
+// (tally). The decided list (default <round folder>/../decided.json)
 // keeps every accepted and rejected edit, so later rounds do not propose them again.
 // merge drops, with the reason, an edit whose `from` is not found exactly once, was decided before, undoes an earlier
-// decision, or touches protected text: a code fence, inline code, a URL, a path, a --flag, a number, or (outside code
-// files) quoted text, which has to come through unchanged.
+// decision (also in part), or touches protected text: a code fence, inline code, a URL, a path, a --flag, a number, or
+// (outside code files) quoted text in double or single quotes and quote block lines, which have to come through
+// unchanged. A candidate whose to is under half or over twice its from is flagged large-change for the voters.
 // A round with no candidate is decided without voters. tally accepts a candidate when more than half of the counted voters, and at least two, vote accept. Of accepted
 // edits that overlap in one file, the one with more accept votes (then the lower id) stays and the other is deferred
-// (not decided, so it may come back). --apply applies the accepted edits (apply-fix.mjs); --dry-run writes nothing.
+// (not decided, so it may come back). --exclude takes accepted ids out before applying (decision excluded).
+// --apply applies the accepted edits (apply-fix.mjs) and then counts only what went in as new consensus; --dry-run
+// writes nothing. A round already tallied (round.json) is not tallied again.
 // A seat whose reply has no JSON array, or whose MODEL line names another model family than seats.json, is not
 // counted (with "modelCheck": "none" in seats.json the MODEL line is only recorded: Codex sub-agents name the parent's
 // model). Fewer than three counted proposers or voters stops the round: run those seats again.
@@ -130,20 +134,28 @@ const TOKEN_RES = [
   /\d+(?:[.,:]\d+)*/g,
 ];
 const QUOTE_RE = /"([^"\n]{1,300})"|“([^”\n]{1,300})”|„([^“”\n]{1,300})[“”]|«([^»\n]{1,300})»|「([^」\n]{1,300})」|『([^』\n]{1,300})』/g;
+// single quotes: ‘…’, and '…' only where a quotation can open and close (not an apostrophe inside a word: don't, it's)
+const SINGLE_RE = /‘([^’\n]{1,300})’|(?<![\p{L}\p{N}])'(?=\S)([^'\n]{1,300}?)(?<=\S)'(?![\p{L}\p{N}])/gu;
+// a Markdown quote block line (> ...): the quoted text stays as it is
+const QUOTE_BLOCK_RE = /^[ \t]{0,3}>.*$/gm;
 
 function spansOf(re, text, mapper = (m) => m[0]) {
   return [...text.matchAll(re)].map((m) => ({ at: m.index, end: m.index + m[0].length, token: mapper(m) }));
 }
 
-/** Protected spans of a text: { at, end, token, fence? }. Quoted text counts only outside code files. */
+const inner = (m) => `"${m.slice(1).find((g) => g !== undefined)}"`;
+
+/** Protected spans of a text: { at, end, token, fence?, block? }. Quotes count only outside code files. */
 export function protectedSpans(text, { code = false } = {}) {
   const out = spansOf(FENCE_RE, text).map((s) => ({ ...s, fence: true }));
   for (const re of TOKEN_RES) out.push(...spansOf(re, text));
-  if (!code) out.push(...spansOf(QUOTE_RE, text, (m) => `"${m.slice(1).find((g) => g !== undefined)}"`));
+  if (code) return out;
+  out.push(...spansOf(QUOTE_RE, text, inner), ...spansOf(SINGLE_RE, text, inner));
+  out.push(...spansOf(QUOTE_BLOCK_RE, text).map((s) => ({ ...s, block: true })));
   return out;
 }
 
-const tokens = (s, code) => protectedSpans(s, { code }).filter((p) => !p.fence).map((p) => p.token).sort();
+const tokens = (s, code) => protectedSpans(s, { code }).filter((p) => !p.fence && !p.block).map((p) => p.token).sort();
 
 /** Why an edit of text[at, at + from.length) to `to` would touch protected text, or ''. */
 export function protectedChange(text, at, from, to, { code = false } = {}) {
@@ -151,6 +163,7 @@ export function protectedChange(text, at, from, to, { code = false } = {}) {
   for (const p of protectedSpans(text, { code })) {
     if (p.end <= at || p.at >= end) continue;
     if (p.fence) return 'inside a code fence';
+    if (p.block) return 'inside a quote block';
     if (p.at < at || p.end > end) return `cuts through protected text ${show(p.token)}`;
   }
   const a = tokens(from, code), b = tokens(to, code);
@@ -178,7 +191,8 @@ function decidedReason(item, decided) {
   for (const d of decided) {
     if (d.file !== item.file) continue;
     if (d.from === item.from) return `decided in round ${d.round} (${d.decision})`;
-    if (d.decision === 'accepted' && d.to === item.from && d.from === item.to) return `undoes an edit accepted in round ${d.round}`;
+    // an edit inside an accepted to that brings back the accepted from (whole or in part) undoes it
+    if (d.decision === 'accepted' && d.to.includes(item.from) && d.to.replace(item.from, item.to) === d.from) return `undoes an edit accepted in round ${d.round}`;
   }
   return '';
 }
@@ -192,6 +206,12 @@ export function dropReason(item, root, decided, cache) {
   const n = count(text, item.from);
   if (n !== 1) return n ? `from found ${n} times` : 'from not found';
   return decidedReason(item, decided) || protectedChange(text, text.indexOf(item.from), item.from, item.to, { code: CODE_EXT.has(extname(item.file).toLowerCase()) });
+}
+
+/** True when some to is under half or over twice the length of a from of 10 characters or more: content may be cut or
+ * added, and the voters are told to look at that. */
+export function largeChange(c) {
+  return c.from.length >= 10 && c.to.some((t) => t.length < c.from.length / 2 || t.length > c.from.length * 2);
 }
 
 /** Groups the counted proposers' items into candidates (same file and from), dropping the ones that cannot be. */
@@ -209,10 +229,11 @@ export function mergeProposals(replies, { root, decided = [] }) {
       const c = byKey.get(key);
       if (!c.to.includes(item.to)) c.to.push(item.to);
       if (typeof item.kind === 'string' && item.kind && !c.kind.includes(item.kind)) c.kind.push(item.kind);
-      if (typeof item.reason === 'string' && item.reason) c.reason.push(item.reason);
+      if (typeof item.reason === 'string' && item.reason && !c.reason.includes(item.reason)) c.reason.push(item.reason);
       if (!c.by.includes(r.seat)) c.by.push(r.seat);
     }
   }
+  for (const c of candidates) if (largeChange(c)) c.flag = 'large-change';
   return { candidates, dropped };
 }
 
@@ -248,6 +269,7 @@ export function resolveOverlaps(decided, root) {
   for (const d of order) {
     const text = fileText(root, d.file, cache) ?? '';
     const at = text.indexOf(d.from), end = at + d.from.length;
+    if (at < 0) continue; // gone from the file since merge: applying skips it, it overlaps nothing
     const spans = kept.get(d.file) ?? [];
     const clash = spans.find((s) => at < s.end && s.at < end);
     if (clash) { d.decision = 'deferred'; d.note = `overlaps candidate ${clash.id}, which has more accept votes or a lower id`; continue; }
@@ -302,7 +324,9 @@ export function runMerge(roundDir, { root, decidedFile }) {
   needSeats(replies, 'proposers');
   const { candidates, dropped } = mergeProposals(replies, { root, decided: readDecided(decidedFileOf(roundDir, decidedFile)) });
   const proposers = replies.map(({ items, ...r }) => ({ ...r, items: items ? items.length : 0 }));
-  writeJson(join(roundDir, 'candidates.json'), { round, scope: seats.scope, proposers, candidates, dropped });
+  // the voters read candidates.json: who proposed a candidate (and how many) is kept apart, in proposed-by.json
+  writeJson(join(roundDir, 'candidates.json'), { round, scope: seats.scope, proposers, candidates: candidates.map(({ by, ...c }) => c), dropped });
+  writeJson(join(roundDir, 'proposed-by.json'), Object.fromEntries(candidates.map((c) => [c.id, c.by])));
   const lines = proposers.map((p) => `proposer ${p.seat} (${p.model}, ${p.effort}${p.reported ? `, reported ${p.reported}` : ''}): ${p.items} items${p.counted ? '' : `, not counted: ${p.note}`}`);
   for (const d of dropped) lines.push(`DROP ${d.by} ${d.file}: ${show(d.from)} (${d.reason})`);
   lines.push(`round ${round}: ${candidates.length} candidates, ${dropped.length} dropped`);
@@ -316,24 +340,37 @@ function applyStep(decisions, root, dryRun) {
   return { accepted, applied: r.applied.length, skipped: r.skipped.map((s) => ({ from: s.item.from, reason: s.reason })), lines: r.lines };
 }
 
+// Accepted candidates the session takes out before applying (a consensus on a wrong fact): decision excluded.
+function exclude(decisions, ids) {
+  for (const id of ids) {
+    const d = decisions.find((x) => x.id === id);
+    if (!d || d.decision !== 'accepted') throw fail(`--exclude ${id}: candidate ${id} is not accepted in this round`, 2);
+    d.decision = 'excluded';
+    d.note = 'taken out by the session before applying (a consensus on a wrong fact; the report says why)';
+  }
+}
+
 function nextDecided(decided, decisions, round, skipped) {
   const skippedFrom = new Set(skipped.map((s) => s.from));
-  const fresh = decisions.filter((d) => (d.decision === 'accepted' && !skippedFrom.has(d.from)) || d.decision === 'rejected')
+  const fresh = decisions.filter((d) => (d.decision === 'accepted' && !skippedFrom.has(d.from)) || d.decision === 'rejected' || d.decision === 'excluded')
     .map((d) => ({ round, file: d.file, from: d.from, to: d.decision === 'accepted' ? d.to_final : d.to[0], decision: d.decision }));
   return [...decided, ...fresh];
 }
 
 /** tally: reads candidates.json and the voters' replies, decides, and (unless dryRun) writes the round's files. */
-export function runTally(roundDir, { root, decidedFile, apply = false, dryRun = false }) {
+export function runTally(roundDir, { root, decidedFile, apply = false, dryRun = false, exclude: out = [] }) {
   const round = roundOf(roundDir), seats = readSeats(roundDir);
+  if (!dryRun && existsSync(join(roundDir, 'round.json'))) throw fail(`${roundDir} is tallied already (round.json); a second tally would apply nothing and overwrite the record`, 2);
   const merged = readJson(join(roundDir, 'candidates.json'));
   // A round without candidates needs no vote: it is the zero round that ends the loop.
   const replies = merged.candidates.length ? readReplies(roundDir, seats.voters, seats.modelCheck) : [];
   if (merged.candidates.length) needSeats(replies, 'voters');
   const { decisions, need } = decide(merged.candidates, replies, root);
+  exclude(decisions, out);
   const step = apply ? applyStep(decisions, root, dryRun) : { accepted: null, applied: null, skipped: [], lines: [] };
   const voters = replies.map(({ items, ...r }) => r);
-  const newConsensus = decisions.filter((d) => d.decision === 'accepted').length;
+  // with --apply only the edits that went in count: a round whose accepted edits all SKIP is no new consensus
+  const newConsensus = apply ? step.applied : decisions.filter((d) => d.decision === 'accepted').length;
   const record = { round, scope: merged.scope, need, proposers: merged.proposers, voters, candidates: decisions, dropped: merged.dropped, applied: step.applied, skipped: step.skipped, newConsensus };
   const lines = voters.filter((v) => !v.counted).map((v) => `voter ${v.seat} not counted: ${v.note}`);
   for (const d of decisions) lines.push(`${d.decision.toUpperCase()} ${d.id} ${d.file}: ${show(d.from)} (${d.votes.accept} accept, ${d.votes.reject} reject${d.note ? `; ${d.note}` : ''})`);
@@ -361,9 +398,10 @@ export function runInit({ from, dir }) {
   const lines = [`work ${work}`];
   if (from) {
     if (!existsSync(from)) throw fail(`${from} not found`, 2);
-    readText(from); // UTF-8 or UTF-16 with a BOM, before anything is copied
+    readText(from); // UTF-8 or UTF-16 with a BOM, before anything is copied (apply-fix writes it back the same way)
     // a plain-text name becomes .md: a DRM may encrypt the copy otherwise (banker keeps its work files off those names)
     const ext = extname(from);
+    if (CODE_EXT.has(ext.toLowerCase())) throw fail(`${from} is a code file; humanizer polishes prose (code and quotes in code are not protected there)`, 2);
     const text = join(work, `text${!ext || /^\.(?:txt|csv)$/i.test(ext) ? '.md' : ext}`);
     copyFileSync(from, text);
     lines.push(`text ${text}`);
@@ -375,8 +413,8 @@ export function runInit({ from, dir }) {
 
 const USAGE = 'usage: node consensus.mjs init [--from <file>] [--dir <folder>]\n'
   + '       node consensus.mjs merge <round folder> --root <dir> [--decided <file>]\n'
-  + '       node consensus.mjs tally <round folder> --root <dir> [--decided <file>] [--apply] [--dry-run]';
-const VALUE_FLAGS = new Set(['--root', '--decided', '--from', '--dir']);
+  + '       node consensus.mjs tally <round folder> --root <dir> [--decided <file>] [--apply] [--dry-run] [--exclude <id,...>]';
+const VALUE_FLAGS = new Set(['--root', '--decided', '--from', '--dir', '--exclude']);
 
 export function parseArgs(argv) {
   const a = { cmd: argv[0], pos: [], apply: false, dryRun: false };
@@ -398,7 +436,9 @@ export function run(argv) {
   if (a.cmd === 'init' && !a.pos.length) return runInit({ from: a.from && resolve(a.from), dir: a.dir });
   if ((a.cmd === 'merge' || a.cmd === 'tally') && a.pos.length === 1) {
     if (!a.root) throw fail(`${a.cmd} needs --root <dir>`, 2);
-    const opts = { root: resolve(a.root), decidedFile: a.decided && resolve(a.decided), apply: a.apply, dryRun: a.dryRun };
+    const ids = a.exclude ? a.exclude.split(',').map((x) => Number(x.trim())) : [];
+    if (ids.some((n) => !Number.isInteger(n) || n < 1)) throw fail('--exclude takes candidate ids: 3 or 3,5', 2);
+    const opts = { root: resolve(a.root), decidedFile: a.decided && resolve(a.decided), apply: a.apply, dryRun: a.dryRun, exclude: ids };
     const roundDir = resolve(a.pos[0]);
     if (!existsSync(roundDir)) throw fail(`${roundDir} not found`, 2);
     return a.cmd === 'merge' ? runMerge(roundDir, opts) : runTally(roundDir, opts);

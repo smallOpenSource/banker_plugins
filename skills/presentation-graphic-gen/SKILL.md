@@ -27,7 +27,7 @@ argument-hint: "[<대본.md>] [--format html|pptx|both] [--dir <폴더>] [--scen
 | 확인 질문 | `AskUserQuestion` | `request_user_input`. 없으면 번호 붙인 평문 선택지 |
 | 샌드박스 | 없음 | 도우미는 작업 폴더 안에서 읽고 쓴다. 브라우저 실행이 막히면 `sandbox_permissions: "require_escalated"` 로 승인을 청한다 |
 | 긴 실행 | Bash 도구 `timeout` 을 넉넉히(최대 600000), 녹화처럼 더 길면 `run_in_background` | `timeout_ms` 를 같은 값으로 |
-| 다듬기 좌석 | `Agent` 도구, `model` 에 `sonnet` 또는 `haiku`, 노력 medium | 하위 에이전트(`model`, `model_reasoning_effort: medium`) 또는 좌석마다 `codex exec -m <id> -c model_reasoning_effort=medium` |
+| 다듬기 좌석 | `Agent` 도구, `model` 에 `sonnet` 또는 `haiku`, 노력 medium | `spawn_agent`(`model` 에 luna id, `reasoning_effort: "medium"`, v2 는 `fork_turns: "none"`), `seats.json` 에 `"modelCheck": "none"`. `spawn_agent` 가 없을 때만 좌석마다 `codex exec -m <id> -c model_reasoning_effort=medium` |
 
 물을 수 없는 실행(`codex exec`, 다른 스킬의 연쇄)에서는 기본값을 쓴다: 형식 `pptx`(HTML 포함), 다듬기 모델은 권장 모델. 모자란 내용은 `[확인 필요]` 로 둔다.
 
@@ -81,7 +81,7 @@ argument-hint: "[<대본.md>] [--format html|pptx|both] [--dir <폴더>] [--scen
 ### 4. 다듬기 모델 묻기
 - 낮은 등급 모델을 고르게 한다. 노력은 medium.
   - Claude Code: `sonnet`(권장) 또는 `haiku`.
-  - Codex: luna(권장). `codex debug models` 를 실행해 실제로 있는 luna id 를 쓴다. 문서 이름은 `gpt-6-luna` 이고, 어떤 CLI 판은 `gpt-5.6-luna` 로 낸다. 둘 다 없으면 목록에서 가장 가벼운 모델을 고르게 한다.
+  - Codex: luna(권장). id 는 `spawn_agent` 가 받는 모델 목록(도구 설명의 모델 카탈로그)의 luna. `gpt-5.6-luna` 가 그 목록에 있으면 그것, 없으면 그 목록의 luna 가운데 판이 가장 높은 것(0.165.0 실측: `gpt-6-luna`. `gpt-5.6-luna` 는 `codex debug models` 에만 있어 띄울 수 없음). luna 가 하나도 없으면 그 목록에서 가장 가벼운 모델을 고르게 한다. 좌석은 `reasoning_effort: "medium"`, `fork_turns: "none"` 으로 띄우고, `seats.json` 에 `"modelCheck": "none"` 을 쓴다(Codex 좌석은 부모 세션의 모델 이름을 밝힌다. `<S>/references/polish-loop.md`).
 
 ### 5. 스토리보드
 - 단계마다 끝 상태 한 장을 먼저 정한다. 한 단계에 생각 하나, 3초 안에 읽히는 화면.
