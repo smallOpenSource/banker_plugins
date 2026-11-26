@@ -19,7 +19,8 @@
 // edits that overlap in one file, the one with more accept votes (then the lower id) stays and the other is deferred
 // (not decided, so it may come back). --apply applies the accepted edits (apply-fix.mjs); --dry-run writes nothing.
 // A seat whose reply has no JSON array, or whose MODEL line names another model family than seats.json, is not
-// counted. Fewer than three counted proposers or voters stops the round: run those seats again.
+// counted (with "modelCheck": "none" in seats.json the MODEL line is only recorded: Codex sub-agents name the parent's
+// model). Fewer than three counted proposers or voters stops the round: run those seats again.
 // Exit codes: 0 done, 1 too few counted seats, 2 usage or file error.
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
@@ -78,7 +79,8 @@ export function readSeats(roundDir) {
   if (!file) throw fail(`no seats.json in ${roundDir} or the folder above it`, 2);
   let j;
   try { j = JSON.parse(readText(file)); } catch (e) { throw e.exit ? e : fail(`${file}: ${e.message}`, 2); }
-  const seats = { scope: typeof j.scope === 'string' ? j.scope : 'full', proposers: j.proposers, voters: j.voters };
+  const seats = { scope: typeof j.scope === 'string' ? j.scope : 'full', modelCheck: j.modelCheck ?? 'reply', proposers: j.proposers, voters: j.voters };
+  if (!['reply', 'none'].includes(seats.modelCheck)) throw fail('seats.json: modelCheck must be reply or none', 2);
   for (const kind of ['proposers', 'voters']) {
     if (!Array.isArray(seats[kind]) || seats[kind].length < 3) throw fail(`seats.json: ${kind} needs three seats or more`, 2);
     seats[kind].forEach((s, i) => checkSeat(s, i, kind));
@@ -94,14 +96,16 @@ function roundOf(roundDir) {
   return Number(m[1]);
 }
 
-/** Each seat's reply: { seat, model, effort, reported, items, counted, note }. */
-export function readReplies(roundDir, seats) {
+/** Each seat's reply: { seat, model, effort, reported, items, counted, note }. check 'none' records MODEL lines but
+ * counts no seat out by them (Codex sub-agents name the parent's model, not their own). */
+export function readReplies(roundDir, seats, check = 'reply') {
   return seats.map((s) => {
     const file = join(roundDir, `${s.seat}.md`);
     const base = { seat: s.seat, model: s.model, effort: s.effort };
     if (!existsSync(file)) return { ...base, reported: '', items: null, counted: false, note: `no ${s.seat}.md` };
     const { items, model } = parseReply(readText(file));
     if (!items) return { ...base, reported: model, items: null, counted: false, note: 'no JSON array in the reply' };
+    if (check === 'none') return { ...base, reported: model, items, counted: true, note: 'model from the spawn call (modelCheck none)' };
     if (modelMismatch(s.model, model)) return { ...base, reported: model, items, counted: false, note: `reply names ${model}, not ${s.model}` };
     return { ...base, reported: model, items, counted: true, note: model ? '' : 'no MODEL line' };
   });
@@ -294,7 +298,7 @@ function readDecided(file) {
 /** merge: reads the proposers' replies and writes candidates.json. Returns the output lines. */
 export function runMerge(roundDir, { root, decidedFile }) {
   const round = roundOf(roundDir), seats = readSeats(roundDir);
-  const replies = readReplies(roundDir, seats.proposers);
+  const replies = readReplies(roundDir, seats.proposers, seats.modelCheck);
   needSeats(replies, 'proposers');
   const { candidates, dropped } = mergeProposals(replies, { root, decided: readDecided(decidedFileOf(roundDir, decidedFile)) });
   const proposers = replies.map(({ items, ...r }) => ({ ...r, items: items ? items.length : 0 }));
@@ -324,7 +328,7 @@ export function runTally(roundDir, { root, decidedFile, apply = false, dryRun = 
   const round = roundOf(roundDir), seats = readSeats(roundDir);
   const merged = readJson(join(roundDir, 'candidates.json'));
   // A round without candidates needs no vote: it is the zero round that ends the loop.
-  const replies = merged.candidates.length ? readReplies(roundDir, seats.voters) : [];
+  const replies = merged.candidates.length ? readReplies(roundDir, seats.voters, seats.modelCheck) : [];
   if (merged.candidates.length) needSeats(replies, 'voters');
   const { decisions, need } = decide(merged.candidates, replies, root);
   const step = apply ? applyStep(decisions, root, dryRun) : { accepted: null, applied: null, skipped: [], lines: [] };

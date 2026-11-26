@@ -16,7 +16,7 @@
 | p3, v3 | `sonnet`, `low` | luna, `low` |
 
 - Claude Code 의 노력에는 `none` 이 없다(`low` 가 가장 낮다).
-- Codex 의 luna 는 `codex debug models` 에 있는 id 를 쓴다. `gpt-5.6-luna` 를 먼저, 없으면 `gpt-6-luna`. 그 모델의 노력 목록에 `none` 이 있을 때만 `none` 을 쓸 수 있다.
+- Codex 의 luna 는 `codex debug models` 에 있는 id 를 쓴다. `gpt-5.6-luna` 가 있으면 그것, 없을 때만 `gpt-6-luna`. 그 모델의 노력 목록에 `none` 이 있을 때만 `none` 을 쓸 수 있다.
 
 ### 띄우는 방법
 
@@ -26,6 +26,7 @@
 | Codex | `spawn_agent` 를 `agent_type` 없이, `model` 에 luna id, `reasoning_effort` 에 노력, `message` 에 좌석 지시. 이 대화는 넘기지 않는다: multi-agent v2 는 `fork_turns: "none"`(이 값이 있어야 `model` 과 `reasoning_effort` 를 받음), v1 은 `fork_context` 를 주지 않는다. `wait_agent` 로 답을 받고 `close_agent` 로 닫는다 |
 | Codex, `spawn_agent` 가 없을 때 | 좌석마다 `codex exec -m <luna id> -c model_reasoning_effort=<노력> -s read-only --skip-git-repo-check - < <지시 파일>`. 표준 입력으로 지시를 넘긴다(PowerShell: `Get-Content -Raw <지시 파일> \| codex exec ... -`). 샌드박스 안이면 `sandbox_permissions: "require_escalated"` 로 승인을 청한다 |
 
+- Codex 는 `seats.json` 에 `"modelCheck": "none"` 을 쓴다. Codex 의 하위 에이전트는 자기 모델이 아니라 부모 세션의 모델 이름을 밝힌다(0.165.0 실측: `gpt-6-luna` 로 띄운 좌석이 `MODEL: gpt-6.1-sol` 이라 답했고, 그 좌석의 기록 `turn_context` 는 `gpt-6-luna`). 그래서 `MODEL:` 줄은 기록만 하고, 좌석의 모델은 `spawn_agent` 에 준 값이다. 좌석이 다른 모델을 밝혔다고 세션 모델로 바꿔 띄우지 않는다.
 - 좌석의 답은 그대로 `<회차 폴더>/<좌석>.md` 에 쓴다(Claude Code 는 `Write`, Codex 는 `apply_patch`). 고치거나 줄이지 않는다.
 - 좌석이 파일을 고쳤으면(원문이 바뀜) 그 회차를 버리고 다시 한다.
 
@@ -41,6 +42,8 @@
 ```
 
 `seats.json`:
+
+Claude Code 의 예. Codex 는 모델에 luna id, 노력은 표대로, 맨 앞에 `"modelCheck": "none"` 을 더한다.
 
 ```json
 { "scope": "full",
@@ -63,7 +66,7 @@
    - 채택한 글은 채택표의 `preferredTo` 가운데 가장 많은 안(같으면 먼저 나온 안).
    - 같은 자리에 겹치는 채택은 `accept` 가 많은 쪽(같으면 낮은 id)만 남고, 다른 쪽은 보류(`deferred`)다. 보류는 결정 목록에 넣지 않아 다음 회차에 다시 나올 수 있다.
    - 합의가 틀린 사실을 바탕으로 하면(원문에 없는 글을 있다고 봄, 문법 규칙을 잘못 앎) 적용 전에 멈추고 그 후보를 `accepted.json` 에서 빼고 `apply-fix.mjs` 로 따로 적용한다. 그 까닭을 보고에 적는다. 그 밖의 이유로 합의를 뒤집지 않는다.
-5. 좌석을 세지 않는 경우: 답에 JSON 배열이 없음, `MODEL:` 줄이 `seats.json` 과 다른 모델 계열(예: `haiku` 좌석이 `sonnet` 이라 답함). 센 좌석이 3개보다 적으면 `merge`, `tally` 가 종료 1 과 다시 띄울 좌석 이름을 낸다. 그 좌석만 다시 띄워 답을 덮어쓴 뒤 같은 명령을 다시 돌린다.
+5. 좌석을 세지 않는 경우: 답에 JSON 배열이 없음, `MODEL:` 줄이 `seats.json` 과 다른 모델 계열(예: `haiku` 좌석이 `sonnet` 이라 답함. `"modelCheck": "none"` 이면 보지 않음). 센 좌석이 3개보다 적으면 `merge`, `tally` 가 종료 1 과 다시 띄울 좌석 이름을 낸다. 그 좌석만 같은 모델과 노력으로 다시 띄워 답을 덮어쓴 뒤 같은 명령을 다시 돌린다. 모델이나 노력을 바꾸지 않는다.
 
 ## 끝
 

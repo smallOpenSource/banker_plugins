@@ -31,7 +31,8 @@ license: MIT
 | 샌드박스 | 없음 | 작업 폴더는 시스템 임시 폴더나 세션 폴더 안. 다른 곳은 `--dir` 로 세션 폴더 안을 준다 |
 
 - 좌석 표, 띄우는 방법, 좌석 지시, 기록 형식은 `<S>/references/consensus-loop.md`.
-- Codex 의 luna id: `codex debug models` 에 있는 것. `gpt-5.6-luna` 를 먼저, 없으면 `gpt-6-luna`. luna 가 없으면 목록에서 가장 작은 모델을 고르게 묻는다. 물을 수 없으면 세션 모델에 노력 `low` 로 하고 보고에 적는다.
+- Codex 의 luna id: `codex debug models` 에 있는 것. `gpt-5.6-luna` 가 있으면 그것, 없을 때만 `gpt-6-luna`. 목록에 luna 가 하나도 없을 때만 가장 작은 모델을 고르게 묻는다. 물을 수 없으면 세션 모델에 노력 `low` 로 하고 보고에 적는다.
+- Codex 의 하위 에이전트는 부모 세션의 모델 이름을 밝힌다. 그래서 Codex 는 `seats.json` 에 `"modelCheck": "none"` 을 쓴다(`consensus-loop.md`). 좌석이 다른 모델을 밝혀도 모델을 바꾸지 않는다.
 - 물을 수 없는 실행(`claude -p`, `codex exec`, 다른 스킬의 연쇄)에서는 묻지 않는다. 원본 파일은 바꾸지 않고 사본 경로를 보고한다.
 
 ## 도우미

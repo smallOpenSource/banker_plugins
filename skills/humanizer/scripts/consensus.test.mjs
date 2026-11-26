@@ -210,3 +210,13 @@ test('CLI: usage errors exit 2', () => {
   assert.equal(r.status, 1, 'no reply files: no counted proposers');
   assert.match(r.stderr, /p1: no p1\.md/);
 });
+
+test('modelCheck none: a reply naming another model still counts and the name is kept (Codex sub-agents name the parent model)', () => {
+  const { dir, round } = work('nocheck', { ...SEATS, modelCheck: 'none' });
+  for (const s of ['p1', 'p2', 'p3']) put(round, s, reply([EDIT], 'gpt-6.1-sol'));
+  run(['merge', round, '--root', dir]);
+  const c = JSON.parse(readFileSync(join(round, 'candidates.json'), 'utf8'));
+  assert.deepEqual(c.proposers.map((p) => [p.counted, p.reported, p.note]), Array(3).fill([true, 'gpt-6.1-sol', 'model from the spawn call (modelCheck none)']));
+  const { round: r2 } = work('badcheck', { ...SEATS, modelCheck: 'maybe' });
+  assert.throws(() => readSeats(r2), /modelCheck must be reply or none/);
+});
