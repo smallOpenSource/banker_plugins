@@ -431,6 +431,44 @@ test('static: 서버를 띄우지도 끄지도 않음(꺼져 있으면 그대로
   }
 });
 
+// 읽기 전용 쓰기 막힘 흉내(chmod). Windows 는 chmod 로 폴더 쓰기를 막지 못하고, root 는 권한을 넘으므로 그 둘은 건너뜀(OS 조건).
+const readOnlySkip = process.platform === 'win32' ? 'chmod cannot make a folder read-only on Windows' : process.getuid && process.getuid() === 0 ? 'root ignores file modes' : false;
+const HINT = '알림: 쓰기가 막힘. Codex 샌드박스면 같은 명령 하나를 sandbox_permissions: "require_escalated" 로 다시 실행(승인 요청). 승인을 못 받으면 사용자가 Codex 입력란에서 ! 를 붙여 같은 명령을 직접 실행';
+
+test('쓰기가 읽기 전용으로 막히면(Codex 샌드박스 흉내) static 은 종료 1 과 승인 안내 줄, init 의 git 제외 알림은 다시 실행 안내', { ...T, skip: readOnlySkip }, () => {
+  const p = project();
+  fs.mkdirSync(p.snaps);
+  fs.chmodSync(p.snaps, 0o555);
+  try {
+    const r = cli(['static', '--now', NOW], p.dir);
+    assert.equal(r.code, 1);
+    assert.equal(r.err, `오류: 쓰기 실패(EACCES): ${p.snaps}\n${HINT}\n`);
+    assert.deepEqual(fs.readdirSync(p.snaps), []);
+  } finally {
+    fs.chmodSync(p.snaps, 0o755);
+  }
+  const q = project(false);
+  assert.equal(spawnSync('git', ['init', '-q'], { cwd: q.dir, env: ENV }).status, 0);
+  const info = path.join(q.dir, '.git', 'info');
+  const excl = path.join(info, 'exclude');
+  fs.mkdirSync(info, { recursive: true });
+  fs.writeFileSync(excl, '# git ls-files --others --exclude-from=.git/info/exclude\n');
+  fs.chmodSync(excl, 0o444);
+  fs.chmodSync(info, 0o555);
+  try {
+    const r = cli(['init', '--memory', 'later'], q.dir);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /^알림: git 제외 목록에 추가하지 못함\(EACCES\)\. 샌드박스가 막았으면 승인을 받아 init 을 다시 실행\(자료 파일은 그대로 두고 제외 줄만 더함\)$/m);
+  } finally {
+    fs.chmodSync(info, 0o755);
+    fs.chmodSync(excl, 0o644);
+  }
+  fs.writeFileSync(path.join(q.data, 'items.json'), '{"schema":1,"items":[]}\n');
+  const again = cli(['init', '--memory', 'later'], q.dir);
+  assert.match(again.out, /^그대로 둠: \.omc\/progress-mon\/items\.json$/m);
+  assert.match(again.out, /^git 제외 목록 추가: \/\.omc\/progress-mon\/ /m);
+});
+
 // 스냅샷만 만든 자료 폴더(init --memory later)는 status 가 갱신 규칙 줄로 드러낸다. 인자 없는 호출은 그 줄로 한 번 묻는다.
 test('init --memory later: 규칙을 쓰지 않고 state.json 에 later, status 의 갱신 규칙 줄(묻기, 묻지 않음, 값 오류)', T, () => {
   const p = project(false);

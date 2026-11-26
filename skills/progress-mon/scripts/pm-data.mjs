@@ -298,6 +298,9 @@ const NEXT = ['다음 할 일', '  1. references/authoring.md 를 읽고 req-spe
 const slash = (p) => p.split(path.sep).join('/');
 const inside = (rel) => rel && !rel.startsWith('..') && !path.isAbsolute(rel);
 
+// 읽기 전용(Codex 샌드박스의 .git 등)으로 쓰기가 막혔을 때의 코드.
+const READ_ONLY = new Set(['EROFS', 'EACCES', 'EPERM']);
+
 // 자료 폴더를 git 제외 목록(git rev-parse --git-path info/exclude)에 한 줄 추가. 추적 파일은 바꾸지 않는다. 실패는 알림만.
 function gitExclude(ctx) {
   let top;
@@ -332,7 +335,8 @@ function gitExclude(ctx) {
     const eol = text.includes('\r\n') ? '\r\n' : '\n';
     fs.appendFileSync(excl, (text && !text.endsWith('\n') ? eol : '') + line + eol);
   } catch (e) {
-    return `알림: git 제외 목록에 추가하지 못함(${e.code || e.message})`;
+    const again = READ_ONLY.has(e.code) ? '. 샌드박스가 막았으면 승인을 받아 init 을 다시 실행(자료 파일은 그대로 두고 제외 줄만 더함)' : '';
+    return `알림: git 제외 목록에 추가하지 못함(${e.code || e.message})${again}`;
   }
   return `git 제외 목록 추가: ${line} (${shown})`;
 }

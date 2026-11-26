@@ -238,3 +238,15 @@ test('SKILL.md: <파일> 과 export 는 덮어쓰지 않음(번호, 링크 안 �
   assert.ok(s.includes('그 사이 폴더나 위 폴더가 링크로 바뀌면 내용을 쓰지 않고 종료 1(`폴더가 바뀌어 쓰지 않음`)'));
   assert.ok(fs.readFileSync(path.join(HERE, 'pm-config.mjs'), 'utf8').includes('`폴더가 바뀌어 쓰지 않음(링크 바꿔치기로 보임): '));
 });
+
+// 실제 codex exec 실측(2026-11-26): init 이 승인 없이 돌아 git 제외 줄이 빠졌고, 작업 폴더가 하위 폴더면 자료 폴더 쓰기가 EROFS.
+test('SKILL.md: Codex 샌드박스 쓰기 범위 규칙(init 은 처음부터 승인, 자료 폴더가 작업 폴더 밖이면 승인, 막힘 안내 줄과 같은 문구, --add-dir 안내 없음)', T, () => {
+  const rt = section('런타임 표');
+  assert.match(rt, /^\| `init` \| 바로 실행 \| git 제외 목록\(`\.git` 안\) 쓰기 때문에 처음부터 승인 요청\. 승인 없이 돌아 `알림: git 제외 목록에 추가하지 못함\(EROFS\)` 가 나오면 승인 요청으로 같은 `init` 을 한 번 더 실행/m);
+  assert.match(rt, /^\| `static` \| 바로 실행 \| 자료 폴더와 `<파일>` 이 작업 폴더 안이면 바로 실행\. 어느 쪽이든 작업 폴더 밖이면/m);
+  for (const w of ['작업 폴더가 프로젝트 루트가 아니면 먼저 사용자에게 알리고', '출력에 `알림: 쓰기가 막힘` 이 나오면 같은 명령 하나를 승인 요청으로 다시 실행한다', '`!` 를 붙여 그 명령을 직접 실행']) assert.ok(rt.includes(w), w);
+  assert.ok(!/--add-dir` 에 .*(넣는다|넣어|추가한다)/.test(SKILL), '--add-dir 로 넓히는 안내 없음');
+  const cli = fs.readFileSync(path.join(HERE, 'progress-mon.mjs'), 'utf8');
+  assert.ok(cli.includes("'알림: 쓰기가 막힘. Codex 샌드박스면 같은 명령 하나를 sandbox_permissions: \"require_escalated\" 로 다시 실행"));
+  assert.ok(fs.readFileSync(path.join(HERE, 'pm-data.mjs'), 'utf8').includes('샌드박스가 막았으면 승인을 받아 init 을 다시 실행(자료 파일은 그대로 두고 제외 줄만 더함)'));
+});
