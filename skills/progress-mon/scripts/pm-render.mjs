@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { esc, color, finite, textW, wrap, FAVICON, CSS, TABS, tabsHtml } from './pm-html.mjs';
-import { configOrFail, loadConfig, writeNew, UsageError, DEFAULT_REQ_RULE, STORYLESS_REQ_RULE } from './pm-config.mjs';
+import { configOrFail, loadConfig, dataReal, dirIdentity, samePath, writeNewIn, UsageError, DEFAULT_REQ_RULE, STORYLESS_REQ_RULE } from './pm-config.mjs';
 import { collect, parseTime, agentJudge } from './pm-sources.mjs';
 import { adrBody } from './pm-adr-view.mjs';
 import { wbsBody } from './pm-wbs-view.mjs';
@@ -1643,14 +1643,16 @@ const minuteStamp = (ms) => {
 export const NUMBER_MAX = 999;
 
 // <stem><ext> 가 있으면 <stem>-2<ext>, <stem>-3<ext> ... 의 첫 빈 이름에 쓴다. 있는 파일은 덮어쓰지 않는다.
-// 새 이름은 writeNew 로 만들어 있는 것(끊어진 링크 포함)을 덮거나 따라가지 않는다. 동시에 부른 두 명령도 이름이 겹치지 않는다.
+// 새 이름은 writeNewIn 으로 만들어 있는 것(끊어진 링크 포함)을 덮거나 따라가지 않고, 처음 본 폴더(opts.id, 없으면 stem 의
+// 폴더가 지금 풀리는 곳)를 고정한 채 쓴다. 동시에 부른 두 명령도 이름이 겹치지 않는다. opts.hook 은 writeNewIn 에 넘긴다.
 // 돌려줌: 쓴 경로.
-export function writeNumbered(stem, ext, data, limit = NUMBER_MAX) {
+export function writeNumbered(stem, ext, data, limit = NUMBER_MAX, opts = {}) {
+  const id = opts.id || dirIdentity(path.dirname(stem));
+  const base = path.basename(stem);
   for (let i = 1; i <= limit; i++) {
-    const file = i === 1 ? `${stem}${ext}` : `${stem}-${i}${ext}`;
+    const name = i === 1 ? `${base}${ext}` : `${base}-${i}${ext}`;
     try {
-      writeNew(file, data);
-      return file;
+      return writeNewIn(id, name, data, { hook: opts.hook, network: opts.network });
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
     }
@@ -1659,20 +1661,22 @@ export function writeNumbered(stem, ext, data, limit = NUMBER_MAX) {
 }
 
 // static 의 기본 자리 <자료 폴더>/snapshots/progress-mon-<YYYYMMDD-HHmm>.html(같은 이름이 있으면 -2, -3 ...).
-// snapshots 는 없으면 만든다. 폴더가 아니거나 링크(끊어진 링크 포함)면 거부. 돌려줌: 쓴 경로.
-function writeSnapshot(dataDir, html, now) {
-  const dir = path.join(dataDir, 'snapshots');
-  let st = fs.lstatSync(dir, { throwIfNoEntry: false });
-  if (!st) {
+// snapshots 는 없으면 만든다. 폴더가 아니거나 링크(끊어진 링크 포함)면 거부. 실제 경로가 자료 폴더 안의 snapshots 그대로가
+// 아니면(위 폴더가 링크) 거부. 본 뒤 쓰기 전의 바꿔치기는 writeNewIn 이 막는다. opts.hook('checked') 는 본 직후. 돌려줌: 쓴 경로.
+export function writeSnapshot(ctx, html, now, opts = {}) {
+  const dir = path.join(ctx.dataDir, 'snapshots');
+  if (!fs.lstatSync(dir, { throwIfNoEntry: false })) {
     try {
       fs.mkdirSync(dir);
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
     }
-    st = fs.lstatSync(dir);
   }
-  if (!st.isDirectory()) throw new UsageError('snapshots 자리에 폴더가 아닌 것(링크 포함)이 있어 거부');
-  return writeNumbered(path.join(dir, `progress-mon-${minuteStamp(now)}`), '.html', html);
+  const id = dirIdentity(dir, { noLink: true });
+  if (!id) throw new UsageError('snapshots 자리에 폴더가 아닌 것(링크 포함)이 있어 거부');
+  if (!samePath(id.real, path.join(dataReal(ctx), 'snapshots'))) throw new UsageError(`snapshots 의 실제 경로가 자료 폴더 밖이라 거부(위 폴더가 링크): ${id.real}`);
+  opts.hook?.('checked');
+  return writeNumbered(path.join(dir, `progress-mon-${minuteStamp(now)}`), '.html', html, NUMBER_MAX, { id, hook: opts.hook });
 }
 
 // 사용자가 준 <file>: 이름은 .html 이나 .htm 으로 끝나야 한다(자료 파일 이름을 실수로 준 것을 막음). 돌려줌: { stem, ext }
@@ -1696,7 +1700,7 @@ export async function command(cmd, ctx, o, io) {
   const html = snapshotFrom(collect(ctx, config, now), config, now);
   let out;
   try {
-    out = name ? writeNumbered(name.stem, name.ext, html) : writeSnapshot(ctx.dataDir, html, now);
+    out = name ? writeNumbered(name.stem, name.ext, html) : writeSnapshot(ctx, html, now);
   } catch (e) {
     if (e instanceof UsageError) throw e;
     throw new UsageError(`쓰기 실패(${e.code || e.message}): ${file || path.join(ctx.dataDir, 'snapshots')}`);

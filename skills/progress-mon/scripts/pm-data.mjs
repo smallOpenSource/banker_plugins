@@ -298,6 +298,9 @@ const NEXT = ['다음 할 일', '  1. references/authoring.md 를 읽고 req-spe
 const slash = (p) => p.split(path.sep).join('/');
 const inside = (rel) => rel && !rel.startsWith('..') && !path.isAbsolute(rel);
 
+// 읽기 전용(Codex 샌드박스의 .git 등)으로 쓰기가 막혔을 때의 코드.
+const READ_ONLY = new Set(['EROFS', 'EACCES', 'EPERM']);
+
 // 자료 폴더를 git 제외 목록(git rev-parse --git-path info/exclude)에 한 줄 추가. 추적 파일은 바꾸지 않는다. 실패는 알림만.
 function gitExclude(ctx) {
   let top;
@@ -332,9 +335,25 @@ function gitExclude(ctx) {
     const eol = text.includes('\r\n') ? '\r\n' : '\n';
     fs.appendFileSync(excl, (text && !text.endsWith('\n') ? eol : '') + line + eol);
   } catch (e) {
-    return `알림: git 제외 목록에 추가하지 못함(${e.code || e.message})`;
+    return excludeFailNote(e);
   }
   return `git 제외 목록 추가: ${line} (${shown})`;
+}
+
+// git 제외 목록 쓰기 실패 알림. 읽기 전용으로 막혔으면 다시 실행 안내를 붙인다.
+function excludeFailNote(e) {
+  const again = READ_ONLY.has(e.code) ? '. 샌드박스가 막았으면 승인을 받아 init 을 다시 실행(자료 파일은 그대로 두고 제외 줄만 더함)' : '';
+  return `알림: git 제외 목록에 추가하지 못함(${e.code || e.message})${again}`;
+}
+
+// init 의 첫 쓰기(자료 폴더, 첫 파일). 읽기 전용으로 막히면 종료 1 과 막힘 안내 줄이 나오게 UsageError 로 감싼다.
+function firstWrite(label, fn) {
+  try {
+    return fn();
+  } catch (e) {
+    if (READ_ONLY.has(e.code)) throw new UsageError(`${label} 만들지 못함(${e.code})`);
+    throw e;
+  }
 }
 
 // 없을 때만 만든다. 돌려줌: 출력 줄. 가리키는 것이 없는 링크는 거부한다(만들면 링크 너머에 파일이 생긴다).
@@ -352,13 +371,13 @@ async function init(ctx, o, io, skillDir, now) {
   const plan = planMemory({ kind: o.memory, memoryDir: o['memory-dir'], project: ctx.project, runtime: ctx.runtime });
   if (o.title !== undefined && !o.title) throw new UsageError('--title 은 빈 문자열이 아니어야 함');
   const label = dataLabel(ctx);
-  fs.mkdirSync(ctx.dataDir, { recursive: true });
+  firstWrite(`자료 폴더 ${label}`, () => fs.mkdirSync(ctx.dataDir, { recursive: true }));
   io.out(`자료 폴더: ${label}`);
   const cfg = defaults(ctx.project, ctx.runtime);
   delete cfg.commitRegex;
   delete cfg.agentLabelPattern;
   if (o.title) cfg.title = o.title;
-  io.out(makeOnce(path.join(ctx.dataDir, 'config.json'), `${label}config.json`, JSON.stringify(cfg, null, 2) + '\n'));
+  io.out(firstWrite(`${label}config.json`, () => makeOnce(path.join(ctx.dataDir, 'config.json'), `${label}config.json`, JSON.stringify(cfg, null, 2) + '\n')));
   io.out(makeOnce(path.join(ctx.dataDir, 'items.json'), `${label}items.json`, JSON.stringify(EMPTY_ITEMS(), null, 2) + '\n'));
   const stFile = path.join(ctx.dataDir, 'state.json');
   const hadState = fs.existsSync(stFile);

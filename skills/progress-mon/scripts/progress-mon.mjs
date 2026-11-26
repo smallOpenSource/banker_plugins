@@ -121,6 +121,16 @@ export async function main(argv, io, cwd = process.cwd()) {
   const ctx = resolveContext({ cwd, project: o.project, runtime: o.runtime, data: o.data });
   if (ctx.warn) io.err(ctx.warn);
   if (NEED_DATA.has(cmd) && !ctx.exists) throw new UsageError(`자료 폴더 없음(${dataLabel(ctx)}). init 먼저 실행`);
+  try {
+    return await run(cmd, ctx, o, io);
+  } catch (e) {
+    // 막힘 안내 줄을 런타임에 맞게 고르도록 런타임을 붙인다.
+    if (e instanceof UsageError) e.runtime = ctx.runtime;
+    throw e;
+  }
+}
+
+async function run(cmd, ctx, o, io) {
   await touchState(ctx);
   if (MODS[cmd]) {
     const mod = await import(`./${MODS[cmd]}`);
@@ -151,6 +161,11 @@ const real = (p) => {
     return path.resolve(p);
   }
 };
+// 쓰기가 읽기 전용으로 막힌 오류 뒤의 안내. Codex 샌드박스는 작업 폴더 밖과 .git 을 읽기 전용으로 둔다.
+const SANDBOX_HINT = {
+  codex: '알림: 쓰기가 막힘. Codex 샌드박스면 같은 명령 하나를 sandbox_permissions: "require_escalated" 로 다시 실행(승인 요청). 승인을 못 받으면 사용자가 Codex 입력란에서 ! 를 붙여 같은 명령을 직접 실행',
+  claude: '알림: 쓰기가 막힘. 그 폴더의 쓰기 권한과 읽기 전용 여부를 확인',
+};
 const same = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
 if (process.argv[1] && same(real(process.argv[1]), real(CLI_PATH))) {
   main(process.argv.slice(2), stdio).then(
@@ -161,6 +176,7 @@ if (process.argv[1] && same(real(process.argv[1]), real(CLI_PATH))) {
     (e) => {
       if (e instanceof UsageError) {
         stdio.err(`오류: ${e.message}`);
+        if (/\((EROFS|EACCES|EPERM)\)/.test(e.message)) stdio.err(SANDBOX_HINT[e.runtime] || SANDBOX_HINT.claude);
         process.exitCode = 1;
       } else {
         stdio.err(`오류: 예기치 못한 오류(${(e && e.message) || e})`);

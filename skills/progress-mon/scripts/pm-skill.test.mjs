@@ -234,5 +234,23 @@ test('SKILL.md: <파일> 과 export 는 덮어쓰지 않음(번호, 링크 안 �
   const step = section('인자 없는 호출');
   assert.ok(step.includes('그 단계의 질문에 규칙 등록을 묶어 한 번에 묻는다. `init` 다시 실행은 한 번만'));
   const render = fs.readFileSync(path.join(HERE, 'pm-render.mjs'), 'utf8');
-  for (const w of ['파일 이름은 .html 이나 .htm 으로 끝나야 함: ', 'snapshots 자리에 폴더가 아닌 것(링크 포함)이 있어 거부', 'export const NUMBER_MAX = 999;']) assert.ok(render.includes(w), w);
+  for (const w of ['파일 이름은 .html 이나 .htm 으로 끝나야 함: ', 'snapshots 자리에 폴더가 아닌 것(링크 포함)이 있어 거부', 'export const NUMBER_MAX = 999;', 'snapshots 의 실제 경로가 자료 폴더 밖이라 거부']) assert.ok(render.includes(w), w);
+  assert.ok(s.includes('그 사이 폴더나 위 폴더가 링크로 바뀌면 내용을 쓰지 않고 종료 1(`폴더가 바뀌어 쓰지 않음`)'));
+  assert.ok(s.includes('Windows 네트워크 경로(SMB 공유, 매핑 드라이브)는 폴더 고정을 확인할 수 없어 쓴 직후 대조로 대신한다'));
+  assert.ok(s.includes('파일 ID 를 0 으로 주는 NAS 는 파일 정체(dev, ino) 대조를 건너뛰고 실제 경로와 링크 수만 본다'));
+  assert.ok(s.includes('모든 길에서 쓴 직후 한 번 더 대조한다. 쓰는 사이 하드 링크가 생기면 그 파일을 0 바이트로 자르고 종료 1'));
+  assert.ok(fs.readFileSync(path.join(HERE, 'pm-config.mjs'), 'utf8').includes("const isNetwork = (real) => real.startsWith('\\\\\\\\');"));
+  assert.ok(fs.readFileSync(path.join(HERE, 'pm-config.mjs'), 'utf8').includes('`폴더가 바뀌어 쓰지 않음(링크 바꿔치기로 보임): '));
+});
+
+// 실제 codex exec 실측(2026-11-26): init 이 승인 없이 돌아 git 제외 줄이 빠졌고, 작업 폴더가 하위 폴더면 자료 폴더 쓰기가 EROFS.
+test('SKILL.md: Codex 샌드박스 쓰기 범위 규칙(init 은 처음부터 승인, 자료 폴더가 작업 폴더 밖이면 승인, 막힘 안내 줄과 같은 문구, --add-dir 안내 없음)', T, () => {
+  const rt = section('런타임 표');
+  assert.match(rt, /^\| `init` \| 바로 실행 \| git 제외 목록\(`\.git` 안\) 쓰기 때문에 처음부터 승인 요청\. 승인 없이 돌아 `알림: git 제외 목록에 추가하지 못함\(EROFS\)` 가 나오면 승인 요청으로 같은 `init` 을 한 번 더 실행/m);
+  assert.match(rt, /^\| `static` \| 바로 실행 \| 자료 폴더와 `<파일>` 이 작업 폴더 안이면 바로 실행\. 어느 쪽이든 작업 폴더 밖이면/m);
+  for (const w of ['작업 폴더가 프로젝트 루트가 아니면 먼저 사용자에게 알리고', '출력에 `알림: 쓰기가 막힘` 이 나오면 같은 명령 하나를 승인 요청으로 다시 실행한다', '`!` 를 붙여 그 명령을 직접 실행']) assert.ok(rt.includes(w), w);
+  assert.ok(!/--add-dir` 에 .*(넣는다|넣어|추가한다)/.test(SKILL), '--add-dir 로 넓히는 안내 없음');
+  const cli = fs.readFileSync(path.join(HERE, 'progress-mon.mjs'), 'utf8');
+  assert.ok(cli.includes("'알림: 쓰기가 막힘. Codex 샌드박스면 같은 명령 하나를 sandbox_permissions: \"require_escalated\" 로 다시 실행"));
+  assert.ok(fs.readFileSync(path.join(HERE, 'pm-data.mjs'), 'utf8').includes('샌드박스가 막았으면 승인을 받아 init 을 다시 실행(자료 파일은 그대로 두고 제외 줄만 더함)'));
 });
