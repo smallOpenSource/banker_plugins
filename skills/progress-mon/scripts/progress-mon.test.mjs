@@ -107,7 +107,7 @@ function guardData(p) {
   if (REPO_DATA && dataOf(p).toLowerCase().startsWith(REPO_DATA)) throw new Error('이 저장소 운영 자료 폴더');
 }
 
-test('--help 는 하위 명령 10개를 보이고 serve 는 숨김, 종료 0', T, () => {
+test('--help 는 하위 명령 11개를 보이고 serve 는 숨김, 종료 0', T, () => {
   const r = cli(['--help'], ROOT);
   assert.equal(r.code, 0);
   assert.equal(r.out, HELP);

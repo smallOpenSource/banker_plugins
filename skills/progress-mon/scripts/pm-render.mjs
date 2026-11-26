@@ -1639,39 +1639,64 @@ const minuteStamp = (ms) => {
   return `${d.getFullYear()}${two(d.getMonth() + 1)}${two(d.getDate())}-${two(d.getHours())}${two(d.getMinutes())}`;
 };
 
-// static 의 기본 자리 <자료 폴더>/snapshots/progress-mon-<YYYYMMDD-HHmm>.html. 같은 이름이 있으면 -2, -3 ...
-// 새 이름은 writeNew 로 만들어 있는 것(끊어진 링크 포함)을 덮거나 따라가지 않는다. 동시에 부른 두 static 도 이름이 겹치지 않는다.
-// snapshots 가 폴더가 아니거나 링크면 거부. 돌려줌: 쓴 경로.
-function writeSnapshot(dataDir, html, now) {
-  const dir = path.join(dataDir, 'snapshots');
-  fs.mkdirSync(dir, { recursive: true });
-  if (!fs.lstatSync(dir).isDirectory()) throw new UsageError('snapshots 자리에 폴더가 아닌 것(링크 포함)이 있어 거부');
-  const base = path.join(dir, `progress-mon-${minuteStamp(now)}`);
-  for (let i = 1; ; i++) {
-    const file = i === 1 ? `${base}.html` : `${base}-${i}.html`;
+// 번호 고리 상한. 넘으면 오류 줄(빈 파일을 만들며 멈추지 않는 것을 막음).
+export const NUMBER_MAX = 999;
+
+// <stem><ext> 가 있으면 <stem>-2<ext>, <stem>-3<ext> ... 의 첫 빈 이름에 쓴다. 있는 파일은 덮어쓰지 않는다.
+// 새 이름은 writeNew 로 만들어 있는 것(끊어진 링크 포함)을 덮거나 따라가지 않는다. 동시에 부른 두 명령도 이름이 겹치지 않는다.
+// 돌려줌: 쓴 경로.
+export function writeNumbered(stem, ext, data, limit = NUMBER_MAX) {
+  for (let i = 1; i <= limit; i++) {
+    const file = i === 1 ? `${stem}${ext}` : `${stem}-${i}${ext}`;
     try {
-      writeNew(file, html);
+      writeNew(file, data);
       return file;
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
     }
   }
+  throw new UsageError(`새 이름을 찾지 못함: ${stem}${ext} 부터 -${limit} 까지 모두 있음`);
+}
+
+// static 의 기본 자리 <자료 폴더>/snapshots/progress-mon-<YYYYMMDD-HHmm>.html(같은 이름이 있으면 -2, -3 ...).
+// snapshots 는 없으면 만든다. 폴더가 아니거나 링크(끊어진 링크 포함)면 거부. 돌려줌: 쓴 경로.
+function writeSnapshot(dataDir, html, now) {
+  const dir = path.join(dataDir, 'snapshots');
+  let st = fs.lstatSync(dir, { throwIfNoEntry: false });
+  if (!st) {
+    try {
+      fs.mkdirSync(dir);
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+    }
+    st = fs.lstatSync(dir);
+  }
+  if (!st.isDirectory()) throw new UsageError('snapshots 자리에 폴더가 아닌 것(링크 포함)이 있어 거부');
+  return writeNumbered(path.join(dir, `progress-mon-${minuteStamp(now)}`), '.html', html);
+}
+
+// 사용자가 준 <file>: 이름은 .html 이나 .htm 으로 끝나야 한다(자료 파일 이름을 실수로 준 것을 막음). 돌려줌: { stem, ext }
+function htmlName(file) {
+  const out = path.resolve(file);
+  const m = /\.html?$/i.exec(out);
+  if (!m) throw new UsageError(`파일 이름은 .html 이나 .htm 으로 끝나야 함: ${file}`);
+  return { stem: out.slice(0, -m[0].length), ext: m[0] };
 }
 
 // CLI: export <file> [--now <ISO>], static [<file>] [--now <ISO>]. export 는 자료 폴더를 만들지 않는다.
-// static 은 자료 폴더가 있을 때만 불린다(진입에서 init 먼저). <file> 이 없으면 위 기본 자리, 있으면 export 처럼 그 파일.
-// 둘 다 서버를 띄우거나 끄지 않는다.
+// static 은 자료 폴더가 있을 때만 불린다(진입에서 init 먼저). <file> 이 없으면 위 기본 자리.
+// <file> 도 덮어쓰지 않는다: 있으면 같은 번호 규칙으로 새 이름에 쓰고 실제 경로를 낸다. 둘 다 서버를 띄우거나 끄지 않는다.
 export async function command(cmd, ctx, o, io) {
   if (cmd !== 'export' && cmd !== 'static') throw new UsageError(`${cmd} 는 pm-render.mjs 가 맡지 않음`);
   const file = o._[1];
   if (o._.length > 2 || (cmd === 'export' && !file)) throw new UsageError(cmd === 'export' ? '사용: export <file> [--now <ISO>]' : '사용: static [<file>] [--now <ISO>]');
+  const name = file ? htmlName(file) : null;
   const now = nowArg(o);
   const config = configOrFail(ctx);
   const html = snapshotFrom(collect(ctx, config, now), config, now);
-  let out = file ? path.resolve(file) : null;
+  let out;
   try {
-    if (out) fs.writeFileSync(out, html);
-    else out = writeSnapshot(ctx.dataDir, html, now);
+    out = name ? writeNumbered(name.stem, name.ext, html) : writeSnapshot(ctx.dataDir, html, now);
   } catch (e) {
     if (e instanceof UsageError) throw e;
     throw new UsageError(`쓰기 실패(${e.code || e.message}): ${file || path.join(ctx.dataDir, 'snapshots')}`);

@@ -7,9 +7,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import net from 'node:net';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { writeNumbered } from './pm-render.mjs';
+import { reject } from './pm-adr.mjs';
+import { UsageError } from './pm-config.mjs';
 
 const T = { timeout: 60000 };
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -140,13 +143,131 @@ test('static <file>: 그 파일에 쓰고 snapshots/ 는 만들지 않음. 인�
   assert.match(cli(['static', path.join(p.dir, 'no-such', 'x.html')], p.dir).err, /쓰기 실패/);
 });
 
-test('static: snapshots 자리에 파일이 있으면 거부(종료 1)', T, () => {
+test('static: snapshots 자리에 파일이 있으면 거부(종료 1), 문구는 링크일 때와 같음', T, () => {
   const p = project();
   fs.writeFileSync(p.snaps, 'x');
   const r = cli(['static', '--now', NOW], p.dir);
   assert.equal(r.code, 1);
-  assert.match(r.err, /snapshots|쓰기 실패/);
+  assert.equal(r.err, '오류: snapshots 자리에 폴더가 아닌 것(링크 포함)이 있어 거부\n');
   assert.equal(fs.readFileSync(p.snaps, 'utf8'), 'x');
+});
+
+const REFUSE = '오류: snapshots 자리에 폴더가 아닌 것(링크 포함)이 있어 거부\n';
+
+// 폴더 링크는 junction 으로 만든다(Windows 는 권한 없이 됨, POSIX 는 형식을 무시하고 폴더 링크).
+test('static: snapshots 가 밖을 가리키는 폴더 링크면 거부하고 밖에 쓰지 않음', T, () => {
+  const p = project();
+  const outside = path.join(p.dir, 'outside');
+  fs.mkdirSync(outside);
+  fs.symlinkSync(outside, p.snaps, 'junction');
+  const r = cli(['static', '--now', NOW], p.dir);
+  assert.equal(r.code, 1);
+  assert.equal(r.err, REFUSE);
+  assert.deepEqual(fs.readdirSync(outside), []);
+});
+
+test('static: snapshots 가 끊어진 링크면 같은 문구로 거부하고 링크 너머에 폴더를 만들지 않음', T, () => {
+  const p = project();
+  const gone = path.join(p.dir, 'gone');
+  fs.mkdirSync(gone);
+  fs.symlinkSync(gone, p.snaps, 'junction');
+  fs.rmSync(gone, { recursive: true });
+  const r = cli(['static', '--now', NOW], p.dir);
+  assert.equal(r.code, 1);
+  assert.equal(r.err, REFUSE);
+  assert.equal(fs.existsSync(gone), false);
+});
+
+const run = (args, cwd) =>
+  new Promise((resolve) => {
+    const c = spawn(process.execPath, [CLI, ...args], { cwd, env: ENV, windowsHide: true });
+    let out = '';
+    c.stdout.on('data', (d) => (out += d));
+    c.on('close', (code) => resolve({ code, out }));
+  });
+
+test('static: 같은 시각으로 동시에 8번 불러도 이름이 겹치지 않고 모두 온전한 파일', T, async () => {
+  const p = project();
+  const rs = await Promise.all(Array.from({ length: 8 }, () => run(['static', '--now', NOW], p.dir)));
+  assert.deepEqual(rs.map((r) => r.code), Array(8).fill(0));
+  const files = rs.map((r) => r.out.split('\n')[0].slice('스냅샷: '.length));
+  assert.equal(new Set(files).size, 8);
+  const base = path.join(p.snaps, `progress-mon-${stampOf(NOW)}`);
+  assert.deepEqual(new Set(files), new Set([`${base}.html`, ...[2, 3, 4, 5, 6, 7, 8].map((i) => `${base}-${i}.html`)]));
+  const sizes = new Set(files.map((f) => fs.statSync(f).size));
+  assert.equal(sizes.size, 1, '모두 같은 크기');
+  for (const f of files) assert.ok(fs.readFileSync(f, 'utf8').trimEnd().endsWith('</html>'), f);
+});
+
+// static <file> 과 export <file> 은 같은 규칙: 덮어쓰지 않고 번호, 링크는 따라가지 않음, 이름은 .html 이나 .htm.
+for (const cmd of ['static', 'export']) {
+  const head = cmd === 'static' ? '스냅샷: ' : '내보냄: ';
+
+  test(`${cmd} <파일>: 있는 파일은 그대로 두고 -2, -3(확장자 앞)에 씀. .htm 도 같음`, T, () => {
+    const p = project();
+    const keep = path.join(p.dir, 'keep.html');
+    fs.writeFileSync(keep, 'KEEP');
+    for (const i of [2, 3]) {
+      const r = cli([cmd, keep, '--now', NOW], p.dir);
+      assert.equal(r.code, 0, r.err);
+      assert.equal(r.out.split('\n')[0], `${head}${path.join(p.dir, `keep-${i}.html`)}`);
+    }
+    assert.equal(fs.readFileSync(keep, 'utf8'), 'KEEP');
+    const htm = path.join(p.dir, 'Page.HTM');
+    fs.writeFileSync(htm, 'OLD');
+    assert.equal(cli([cmd, htm, '--now', NOW], p.dir).out.split('\n')[0], `${head}${path.join(p.dir, 'Page-2.HTM')}`);
+    assert.equal(fs.readFileSync(htm, 'utf8'), 'OLD');
+  });
+
+  test(`${cmd} <파일>: 링크(있는 대상, 끊어진 것)는 따라가지 않고 -2`, { ...T, skip: symlinkSkip }, () => {
+    const p = project();
+    const target = path.join(p.dir, 'outside.txt');
+    fs.writeFileSync(target, 'OUTSIDE');
+    fs.symlinkSync(target, path.join(p.dir, 'link.html'), 'file');
+    const r = cli([cmd, path.join(p.dir, 'link.html'), '--now', NOW], p.dir);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(r.out.split('\n')[0], `${head}${path.join(p.dir, 'link-2.html')}`);
+    assert.equal(fs.readFileSync(target, 'utf8'), 'OUTSIDE');
+    const gone = path.join(p.dir, 'gone.html');
+    fs.symlinkSync(gone, path.join(p.dir, 'dead.html'), 'file');
+    assert.equal(cli([cmd, path.join(p.dir, 'dead.html'), '--now', NOW], p.dir).out.split('\n')[0], `${head}${path.join(p.dir, 'dead-2.html')}`);
+    assert.equal(fs.existsSync(gone), false, '링크 너머에 파일을 만들지 않음');
+  });
+
+  test(`${cmd} <파일>: .html, .htm 이 아닌 이름은 종료 1 이고 그 파일과 자료 파일은 그대로`, T, () => {
+    const p = project();
+    const notes = path.join(p.dir, 'notes.txt');
+    fs.writeFileSync(notes, 'IMPORTANT');
+    const items = path.join(p.data, 'items.json');
+    const before = fs.readFileSync(items, 'utf8');
+    for (const f of [notes, items, path.join(p.dir, 'x.html.bak'), path.join(p.dir, 'noext')]) {
+      const r = cli([cmd, f, '--now', NOW], p.dir);
+      assert.equal(r.code, 1, f);
+      assert.equal(r.err, `오류: 파일 이름은 .html 이나 .htm 으로 끝나야 함: ${f}\n`);
+    }
+    assert.equal(fs.readFileSync(notes, 'utf8'), 'IMPORTANT');
+    assert.equal(fs.readFileSync(items, 'utf8'), before);
+    assert.equal(fs.existsSync(path.join(p.dir, 'noext')), false);
+  });
+}
+
+test('번호 고리 상한: writeNumbered, adr.json 옮기기 모두 상한을 넘으면 오류 줄, 새 파일 0, 원본 그대로', T, () => {
+  const p = project();
+  const stem = path.join(p.dir, 'full');
+  for (const f of ['full.html', 'full-2.html', 'full-3.html']) fs.writeFileSync(path.join(p.dir, f), f);
+  const before = fs.readdirSync(p.dir).sort();
+  assert.throws(() => writeNumbered(stem, '.html', 'x', 3), (e) => e instanceof UsageError && e.message === `새 이름을 찾지 못함: ${stem}.html 부터 -3 까지 모두 있음`);
+  assert.deepEqual(fs.readdirSync(p.dir).sort(), before);
+  for (const f of ['full.html', 'full-2.html', 'full-3.html']) assert.equal(fs.readFileSync(path.join(p.dir, f), 'utf8'), f);
+  assert.equal(writeNumbered(stem, '.html', 'x', 4), `${stem}-4.html`);
+  const adr = path.join(p.data, 'adr.json');
+  const at = Date.parse(NOW);
+  const first = reject(adr, at, 1);
+  fs.copyFileSync(first, adr);
+  const bytes = fs.readFileSync(adr);
+  assert.throws(() => reject(adr, at, 1), (e) => e instanceof UsageError && /옮길 새 이름을 찾지 못함: .*-1 까지 모두 있음\. adr\.json 그대로$/.test(e.message));
+  assert.deepEqual(fs.readFileSync(adr), bytes, 'adr.json 그대로');
+  assert.equal(reject(adr, at, 2), `${first}-2`);
 });
 
 test('static HTML: meta refresh, fetch, 주기 갱신 스크립트, 서버 주소 0. 윗부분에 스냅샷 <시각> 기준, 6탭', T, () => {

@@ -6,7 +6,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { git, noBom, readRegular, writeAtomic, writeNew } from './pm-config.mjs';
+import { git, noBom, readRegular, writeAtomic, writeNew, UsageError } from './pm-config.mjs';
 
 const ADR_FILE = 'adr.json';
 const ADR_CHECK_FILE = 'adr-check.json';
@@ -405,12 +405,12 @@ const stamp = (ms) => {
 
 // 스키마 FAIL 이 남은 adr.json 을 같은 폴더의 adr.json.rejected-<시각>(있으면 -2, -3 ...)으로 옮긴다. 결정 기록을 잃지 않게
 // 지우지 않는다. 새 이름은 writeNew 로 만들어 있는 것(끊어진 링크 포함)을 덮거나 따라가지 않고, 사본을 만든 뒤에만 원본을
-// 지운다. 돌려줌: 옮긴 경로.
-function reject(file, now) {
+// 지운다. 번호는 limit 까지(넘으면 원본을 두고 오류 줄). 돌려줌: 옮긴 경로.
+export function reject(file, now, limit = 999) {
   const base = `${file}.rejected-${stamp(now)}`;
   const bytes = fs.readFileSync(file);
   const mode = fs.statSync(file).mode & 0o777; // as COPYFILE_EXCL kept it
-  for (let i = 1; ; i++) {
+  for (let i = 1; i <= limit; i++) {
     const dest = i === 1 ? base : `${base}-${i}`;
     try {
       writeNew(dest, bytes, { mode });
@@ -421,6 +421,7 @@ function reject(file, now) {
     fs.rmSync(file, { force: true });
     return dest;
   }
+  throw new UsageError(`옮길 새 이름을 찾지 못함: ${base} 부터 -${limit} 까지 모두 있음. ${path.basename(file)} 그대로`);
 }
 
 // init 정리 단계(결정 I). 스키마 위반이 남으면 adr.json 을 adr.json.rejected-<시각> 으로 옮겨 자료 없음으로, 참조 FAIL 만
