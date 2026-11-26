@@ -8,8 +8,8 @@
 // (references/patterns-en.md) or general (references/criteria-general.md). Code fences, inline code and URLs are left
 // out before counting, and so are paths, --flags and identifiers. Each run of letters of one script counts once (a
 // word, or a stretch of Hangul or Han). Latin words whose language the function words do not tell are loanwords of
-// the text's other language, so a Korean text full of English terms stays Korean; a short Latin text of ASCII words
-// alone is English. mixed is true when a second language has 30% of the runs or more.
+// the text's other language, so a Korean text full of English terms stays Korean; a short Latin text alone is English
+// when it has an English function word, else und-Latn. mixed is true when a second language has 30% of the runs or more.
 // Exit codes: 0 done, 2 usage or file error.
 import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -90,13 +90,15 @@ function langOfScript(script, texts) {
 const UNSURE = '?Latn';
 
 // Latin words no language could be told from are loanwords of the other language of the text (React, hook, state in a
-// Korean text); in a text of them alone they are English when every letter is ASCII, else und-Latn.
+// Korean text); in a text of them alone they are English when one of them is an English function word, else und-Latn
+// (the seats, native editors, tell the language themselves).
 function placeUnsure(shares, latinWords) {
   const share = shares[UNSURE];
   if (share === undefined) return;
   delete shares[UNSURE];
   const host = Object.entries(shares).filter(([l]) => !l.startsWith('und')).sort((a, b) => b[1] - a[1])[0];
-  const to = host ? host[0] : latinWords.every((w) => /^[A-Za-z]+$/.test(w)) ? 'en' : 'und-Latn';
+  const en = new Set(STOPWORDS.en.split(' '));
+  const to = host ? host[0] : latinWords.some((w) => en.has(w.toLowerCase())) ? 'en' : 'und-Latn';
   shares[to] = Math.round(((shares[to] || 0) + share) * 1000) / 1000;
 }
 

@@ -67,7 +67,9 @@ test('CLI prints one JSON line; usage and file errors exit 2', () => {
 test('a Korean text full of English terms, paths and identifiers is Korean; a short ASCII headline is English', () => {
   assert.deepEqual(pick('React 의 useState hook 은 component state 를 관리한다. props 와 context 도 쓴다.'), ['ko', 'ko', false]);
   assert.deepEqual(pick('설정은 /etc/banker/config.json 과 ~/.config/banker 에 있습니다. --dry-run 으로 먼저 봅니다.'), ['ko', 'ko', false]);
-  assert.deepEqual(pick('Fast install. Zero config. Works offline.'), ['en', 'en', false]);
+  assert.deepEqual(pick('Fast install with zero config.'), ['en', 'en', false], 'one English function word: English');
+  assert.equal(detectLanguage('Fast install. Zero config. Works offline.').lang, 'und-Latn', 'no function word: the seats tell');
+  assert.equal(detectLanguage('Schnelle Installation, keine Konfiguration.').lang, 'und-Latn', 'short German is not taken for English');
   assert.equal(detectLanguage('Café crème brûlée').lang, 'und-Latn', 'letters outside ASCII with no function word stay unknown');
   assert.equal(prose('a fooBar x.y_z v2 --flag /usr/bin C:\\tmp b').replace(/\s+/g, ' ').trim(), 'a b');
 });

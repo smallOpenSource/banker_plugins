@@ -1,7 +1,7 @@
 // consensus.test.mjs: merge, tally and the protected-text guard of the consensus loop. Run: node --test scripts/consensus.test.mjs
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
@@ -287,4 +287,41 @@ test('init refuses a code file: humanizer polishes prose', () => {
   const src = join(TMP, 'app.js');
   writeFileSync(src, "const s = 'hi';\n");
   assert.throws(() => run(['init', '--from', src]), /is a code file; humanizer polishes prose/);
+});
+
+test("a Korean particle right after a closing single quote ('AI 티'를) still closes the quotation", () => {
+  const text = "그는 'AI 티'를 없앤다고 했다. 'AI 티' 라고도 한다. rock'n'roll 과 90's 는 인용이 아니다.\n";
+  const at = (s) => text.indexOf(s);
+  assert.match(protectedChange(text, at("'AI 티'를"), "'AI 티'를", "'AI 냄새'를"), /changes protected text/);
+  assert.equal(protectedChange(text, at("'AI 티'를 없앤다고"), "'AI 티'를 없앤다고", "'AI 티'를 없애겠다고"), '');
+  assert.equal(protectedChange(text, at("rock'n'roll 과"), "rock'n'roll 과", "rock'n'roll 와"), '', 'apostrophes between Latin letters');
+});
+
+test('merge drops an edit of a file that is a link (apply-fix would skip it)', () => {
+  const { dir, round } = work('merge-link');
+  try {
+    symlinkSync(join(dir, 'text.md'), join(dir, 'alias.md'));
+  } catch (e) {
+    if (process.platform === 'win32' && e.code === 'EPERM') return; // Windows without the right to make links
+    throw e;
+  }
+  for (const [s, m] of [['p1', 'claude-sonnet-5-5'], ['p2', 'claude-haiku-5-5'], ['p3', 'claude-sonnet-5-5']]) put(round, s, reply([{ ...EDIT, file: 'alias.md' }], m));
+  run(['merge', round, '--root', dir]);
+  const c = JSON.parse(readFileSync(join(round, 'candidates.json'), 'utf8'));
+  assert.equal(c.candidates.length, 0);
+  assert.equal(c.dropped[0].reason, 'file is a link; give the file it leads to');
+});
+
+test('init refuses common code and config files (.py, .sh, .ps1, .yaml, ...), and takes prose (.md, .html, plain text)', () => {
+  for (const ext of ['.py', '.sh', '.ps1', '.bat', '.go', '.rs', '.yaml', '.toml', '.ts']) {
+    const src = join(TMP, `code${ext}`);
+    writeFileSync(src, 'x = 1\n');
+    assert.throws(() => run(['init', '--from', src]), /is a code file/, ext);
+  }
+  for (const ext of ['.md', '.html', '.rst']) {
+    const src = join(TMP, `prose${ext}`);
+    writeFileSync(src, 'Hello there.\n');
+    const lines = run(['init', '--from', src]);
+    rmSync(lines[0].replace(/^work /, ''), { recursive: true, force: true });
+  }
 });

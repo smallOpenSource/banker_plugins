@@ -26,7 +26,7 @@
 // counted (with "modelCheck": "none" in seats.json the MODEL line is only recorded: Codex sub-agents name the parent's
 // model). Fewer than three counted proposers or voters stops the round: run those seats again.
 // Exit codes: 0 done, 1 too few counted seats, 2 usage or file error.
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -37,6 +37,10 @@ const fail = (msg, exit) => Object.assign(new Error(msg), { exit });
 export const EFFORTS = ['none', 'low', 'medium'];
 const FAMILIES = ['opus', 'sonnet', 'haiku', 'fable', 'luna', 'sol', 'terra', 'astra'];
 const CODE_EXT = new Set(['.js', '.mjs', '.cjs', '.ts', '.jsx', '.tsx', '.json']);
+// what init refuses: code and config files, not prose
+export const REFUSED_EXT = new Set([...CODE_EXT, '.mts', '.cts', '.py', '.pyw', '.sh', '.bash', '.zsh', '.fish', '.ps1', '.psm1',
+  '.bat', '.cmd', '.rb', '.go', '.rs', '.java', '.kt', '.c', '.h', '.cc', '.cpp', '.hpp', '.cs', '.php', '.pl', '.lua',
+  '.swift', '.scala', '.sql', '.yaml', '.yml', '.toml', '.ini', '.xml', '.css', '.scss']);
 const show = (s) => JSON.stringify(String(s).length > 40 ? String(s).slice(0, 40) + '..' : String(s));
 
 // ---------- seat replies ----------
@@ -134,8 +138,9 @@ const TOKEN_RES = [
   /\d+(?:[.,:]\d+)*/g,
 ];
 const QUOTE_RE = /"([^"\n]{1,300})"|“([^”\n]{1,300})”|„([^“”\n]{1,300})[“”]|«([^»\n]{1,300})»|「([^」\n]{1,300})」|『([^』\n]{1,300})』/g;
-// single quotes: ‘…’, and '…' only where a quotation can open and close (not an apostrophe inside a word: don't, it's)
-const SINGLE_RE = /‘([^’\n]{1,300})’|(?<![\p{L}\p{N}])'(?=\S)([^'\n]{1,300}?)(?<=\S)'(?![\p{L}\p{N}])/gu;
+// single quotes: ‘…’, and '…' only where a quotation can open and close. An apostrophe sits between Latin letters or
+// digits (don't, it's, 90's); a Korean particle may follow the closing quote ('AI 티'를), which still closes it.
+const SINGLE_RE = /‘([^’\n]{1,300})’|(?<![\p{Script=Latin}\p{N}])'(?=\S)([^'\n]{1,300}?)(?<=\S)'(?![\p{Script=Latin}\p{N}])/gu;
 // a Markdown quote block line (> ...): the quoted text stays as it is
 const QUOTE_BLOCK_RE = /^[ \t]{0,3}>.*$/gm;
 
@@ -178,6 +183,8 @@ function count(hay, needle) {
   return n;
 }
 
+const isLink = (p) => { try { return lstatSync(p).isSymbolicLink(); } catch { return false; } };
+
 function fileText(root, file, cache) {
   if (cache.has(file)) return cache.get(file);
   const abs = resolve(root, file), rel = relative(resolve(root), abs);
@@ -201,6 +208,7 @@ function decidedReason(item, decided) {
 export function dropReason(item, root, decided, cache) {
   if (!item || typeof item.file !== 'string' || typeof item.from !== 'string' || typeof item.to !== 'string') return 'needs file, from and to as text';
   if (!item.from || item.from === item.to) return item.from ? 'from and to are the same' : 'empty from';
+  if (isLink(resolve(root, item.file))) return 'file is a link; give the file it leads to';
   const text = fileText(root, item.file, cache);
   if (text === null) return 'file not found or outside the root';
   const n = count(text, item.from);
@@ -401,7 +409,7 @@ export function runInit({ from, dir }) {
     readText(from); // UTF-8 or UTF-16 with a BOM, before anything is copied (apply-fix writes it back the same way)
     // a plain-text name becomes .md: a DRM may encrypt the copy otherwise (banker keeps its work files off those names)
     const ext = extname(from);
-    if (CODE_EXT.has(ext.toLowerCase())) throw fail(`${from} is a code file; humanizer polishes prose (code and quotes in code are not protected there)`, 2);
+    if (REFUSED_EXT.has(ext.toLowerCase())) throw fail(`${from} is a code file; humanizer polishes prose (code and quotes in code are not protected there)`, 2);
     const text = join(work, `text${!ext || /^\.(?:txt|csv)$/i.test(ext) ? '.md' : ext}`);
     copyFileSync(from, text);
     lines.push(`text ${text}`);
