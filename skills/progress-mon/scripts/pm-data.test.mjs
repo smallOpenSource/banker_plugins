@@ -66,7 +66,7 @@ test('init: --memory 없음과 틀린 값은 종료 1, 아무것도 만들지 �
   const p = project({ git: true });
   const a = cli(['init'], p);
   assert.equal(a.code, 1);
-  assert.equal(a.err, '오류: init 에는 --memory claude-md|agents-md|auto-memory|none 가 필요함\n');
+  assert.equal(a.err, '오류: init 에는 --memory claude-md|agents-md|auto-memory|none|later 가 필요함\n');
   const b = cli(['init', '--memory', 'home'], p);
   assert.equal(b.code, 1);
   assert.match(b.err, /받은 값 home/);

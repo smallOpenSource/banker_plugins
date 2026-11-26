@@ -137,7 +137,7 @@ test('auto-memory: 규칙 파일 frontmatter, MEMORY.md 색인 한 줄, 다시 �
   assert.equal(fs.readFileSync(path.join(mem, 'MEMORY.md'), 'utf8'), index);
   assert.throws(() => planMemory({ kind: 'auto-memory', project: p, runtime: 'claude' }), /--memory-dir <dir> 가 필요함/);
   assert.throws(() => planMemory({ kind: 'claude-md', memoryDir: mem, project: p, runtime: 'claude' }), /auto-memory 에만/);
-  assert.throws(() => planMemory({ project: p, runtime: 'claude' }), /--memory claude-md\|agents-md\|auto-memory\|none 가 필요함/);
+  assert.throws(() => planMemory({ project: p, runtime: 'claude' }), /--memory claude-md\|agents-md\|auto-memory\|none\|later 가 필요함/);
   assert.throws(() => planMemory({ kind: 'home', project: p, runtime: 'claude' }), /받은 값 home/);
 });
 
