@@ -12,7 +12,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { writeNumbered, writeSnapshot } from './pm-render.mjs';
 import { reject } from './pm-adr.mjs';
-import { UsageError, dataReal } from './pm-config.mjs';
+import { UsageError, dataReal, sameNode } from './pm-config.mjs';
 
 const T = { timeout: 60000 };
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -499,6 +499,32 @@ test('쓰는 중 폴더가 지워지면 원시 오류 대신 같은 거부(Usage
   }
   if (removed) assert.ok(err instanceof UsageError && err.message.startsWith('폴더가 바뀌어 쓰지 않음'), String(err));
   else assert.equal(fs.readFileSync(out, 'utf8'), 'SNAP');
+});
+
+// 하드 링크 틈: 연 뒤 쓰기 전(opened)에 생기면 지금 fstat 의 링크 수로 쓰기 전에 거부(밖 이름 0 바이트),
+// 쓴 직후(written)에 생기면 모든 길에서 0 바이트로 자르고 거부. 로컬 길(POSIX, Windows NTFS) 그대로.
+test('하드 링크: 쓰기 전(opened)이면 쓰지 않고, 쓴 직후(written)면 0 바이트로 잘라 거부. 밖 이름에 내용 없음', T, () => {
+  for (const stage of ['opened', 'written']) {
+    const p = project();
+    const dir = path.join(p.dir, 'hl');
+    fs.mkdirSync(dir);
+    const copy = path.join(ROOT, `hl-${n}-${stage}.html`);
+    const hook = (s) => {
+      if (s === stage) fs.linkSync(path.join(dir, 'page.html'), copy);
+    };
+    assert.throws(() => writeNumbered(path.join(dir, 'page'), '.html', 'PAGE', 999, { hook }), (e) => e instanceof UsageError && e.message.startsWith('폴더가 바뀌어 쓰지 않음'), stage);
+    assert.equal(fs.statSync(copy).size, 0, `${stage}: 밖 이름의 내용 0 바이트`);
+    assert.equal(fs.existsSync(path.join(dir, 'page.html')), false, `${stage}: 안의 파일은 지움`);
+  }
+});
+
+test('파일 ID 0(파일 ID 를 주지 않는 NAS)은 dev, ino 대조를 건너뜀(거부하지 않음). 0 이 아니면 그대로 대조', T, () => {
+  assert.equal(sameNode({ dev: 1n, ino: 0n }, { dev: 2n, ino: 9n }), true);
+  assert.equal(sameNode({ dev: 1n, ino: 9n }, { dev: 1n, ino: 0n }), true);
+  assert.equal(sameNode({ dev: 1n, ino: 9n }, { dev: 1n, ino: 9n }), true);
+  assert.equal(sameNode({ dev: 1n, ino: 9n }, { dev: 1n, ino: 8n }), false);
+  assert.equal(sameNode({ dev: 1n, ino: 9n }, { dev: 2n, ino: 9n }), false);
+  assert.equal(sameNode(undefined, { dev: 1n, ino: 0n }), false, '없는 이름은 거짓');
 });
 
 // 네트워크 경로(SMB) 길: rename 고정 확인 대신 쓴 직후 fd 와 경로 대조. 로컬 NTFS 에서 network: true 로 그 길을 돌린다.

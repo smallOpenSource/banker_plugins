@@ -184,7 +184,7 @@ export class UsageError extends Error {}
 // 않고 EEXIST(링크를 따라 만든 빈 파일은 지움). 볼 수 없으면(ESTALE, EPERM 등) 보통의 wx 처럼 그대로 쓴다. 쓰기가
 // 실패하면 이름이 아직 그 파일일 때 지운다(빈 잠금이나 빈 백업이 남지 않게). 처음 lstat 의 EPERM 등(Windows 에서 지우는
 // 중인 파일)은 그대로 던진다. 부른 쪽은 wx 의 같은 코드처럼 기다린다.
-// opts.verify(연 파일의 fstat) 는 내용을 쓰기 전에 부른다. 던지면 쓰기 실패와 같이 빈 파일을 지우고 다시 던진다.
+// opts.verify(연 파일의 fstat, fd) 는 내용을 쓰기 전에 부른다. 던지면 쓰기 실패와 같이 빈 파일을 지우고 다시 던진다.
 // opts.written(fstat, fd) 는 내용을 쓴 직후 부른다. 던지면 위와 같이 지우고 다시 던진다.
 // opts.after() 는 내용을 쓴 뒤 파일을 닫기 전에 부른다(writeNewIn 이 폴더를 고정한 채 할 일).
 export function writeNew(file, data, opts = {}, fsx = fs) {
@@ -194,7 +194,7 @@ export function writeNew(file, data, opts = {}, fsx = fs) {
     const made = fstatOr(fd, fsx);
     if (namesOpened(file, made, fsx) === false) throw eexist(file);
     try {
-      opts.verify?.(made);
+      opts.verify?.(made, fd);
       fsx.writeFileSync(fd, data);
       opts.written?.(made, fd);
     } catch (e) {
@@ -273,7 +273,8 @@ const PINNED_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
 // id 폴더(dirIdentity) 안에 새 파일 name 을 writeNew 로 만든다. 내용을 쓰기 전에 연 파일이 처음 본 그 폴더 안에 있는지
 // 대조하고, 아니면 내용 없이 빈 파일을 지우고 UsageError. 까닭: 폴더를 본 뒤 쓰기 전에 그 폴더나 위 폴더를 링크로 바꿔치기하면
 // 밖에 쓰게 된다. Node 에 openat 이 없어 OS 마다 다르게 고정한다(pinPosix, pinnedWin).
-// opts: mode, hook(단계 이름: 'pinned' 는 열기 직전, 'opened' 는 연 뒤 대조 직전, 'written' 은 네트워크 경로에서 쓴 직후.
+// 내용을 쓴 직후에도 같은 대조(파일 이름과 fd, 링크 수 1)를 다시 하고, 어긋나면 그 파일을 0 바이트로 자르고 거부한다.
+// opts: mode, hook(단계 이름: 'pinned' 는 열기 직전, 'opened' 는 연 뒤 대조 직전, 'written' 은 쓴 직후 대조 직전.
 // 시험이 바꿔치기를 끼우는 자리), network(Windows 만. 빼면 실제 경로가 \\ 로 시작할 때 참. 시험이 로컬에서 그 길을 돌릴 때),
 // after(at): 내용을 쓴 뒤 폴더를 고정한 채 부름. at(이름) 은 그 폴더 안의 이름을 가리키는 경로. 돌려줌: path.join(id.dir, name).
 export function writeNewIn(id, name, data, opts = {}) {
@@ -283,21 +284,23 @@ export function writeNewIn(id, name, data, opts = {}) {
     const file = at(name);
     hook('pinned');
     const network = opts.network ?? isNetwork(id.real);
-    const verify = (made) => {
+    const verify = (made, fd) => {
       hook('opened');
-      pinnedWin(id, file, made, network);
+      pinnedWin(id, file, { ...made, fd }, network);
     };
-    const written = network ? (made, fd) => recheckNetwork(id, file, made, fd, hook) : undefined;
+    const written = (made, fd) => recheck(() => namesStill(id, file, { ...made, fd }), id, fd, hook);
     writeNew(file, data, { mode: opts.mode, verify, written, after: opts.after && (() => opts.after(at)) });
   } else {
     pinPosix(id, () => {
       hook('pinned');
       cwdIs(id);
-      const verify = () => {
+      const verify = (made, fd) => {
         hook('opened');
         cwdIs(id);
+        if (!fileStill(name, made, fd)) throw moved(id);
       };
-      writeNew(name, data, { mode: opts.mode, verify, after: opts.after && (() => opts.after((n) => n)) });
+      const written = (made, fd) => recheck(() => cwdOk(id) && fileStill(name, made, fd), id, fd, hook);
+      writeNew(name, data, { mode: opts.mode, verify, written, after: opts.after && (() => opts.after((n) => n)) });
     });
   }
   return path.join(id.dir, name);
@@ -322,14 +325,25 @@ function pinPosix(id, fn) {
 // POSIX: cwd 가 처음 본 폴더(dev, ino)이고, 커널이 아는 그 폴더의 실제 경로(getcwd)가 처음과 같은지. 아니면 그 폴더가
 // 옮겨졌거나 chdir 이 링크를 따라갔다.
 function cwdIs(id) {
-  let ok = false;
+  if (!cwdOk(id)) throw moved(id);
+}
+
+function cwdOk(id) {
   try {
-    const st = fs.lstatSync('.', { bigint: true });
-    ok = st.dev === id.dev && st.ino === id.ino && fs.realpathSync.native('.') === id.real;
+    return sameNode(fs.lstatSync('.', { bigint: true }), id) && fs.realpathSync.native('.') === id.real;
   } catch {
-    ok = false; // 그 폴더가 지워짐 등. 원시 오류(종료 2) 대신 같은 거부로
+    return false; // 그 폴더가 지워짐 등. 원시 오류(종료 2) 대신 같은 거부로
   }
-  if (!ok) throw moved(id);
+}
+
+// 파일 이름이 연 파일(dev, ino)이고 지금 링크 수가 1(다른 곳에 하드 링크 없음)인지. 볼 수 없으면 거짓.
+function fileStill(file, made, fd) {
+  try {
+    const at = fs.lstatSync(file, { bigint: true, throwIfNoEntry: false });
+    return Boolean(at?.isFile()) && sameNode(at, made) && oneLink(fs.fstatSync(fd, { bigint: true }));
+  } catch {
+    return false;
+  }
 }
 
 // Windows: 상대 경로도 cwd 문자열로 풀려 chdir 이 소용없다. 대신 열린 파일이 있는 폴더와 그 위 폴더는 이름을 바꿀 수 없다
@@ -337,40 +351,41 @@ function cwdIs(id) {
 // 없다는 뜻이라 거부한다. 고정된 다음에 그 이름이 링크가 아닌 처음 폴더이고, 실제 경로가 같고, 파일 이름이 연 파일이며
 // 링크 수가 1(다른 곳에 하드 링크 없음)인지 본다.
 // 네트워크 경로(SMB 공유, 매핑 드라이브. 실제 경로가 \\ 로 시작)는 연 파일이 있어도 제 이름 rename 이 성공해(박스 실측)
-// 이 고정 확인을 쓸 수 없다. 그때는 rename 확인을 건너뛰고 이름 대조만 한 뒤 recheckNetwork 가 쓴 직후 다시 대조한다.
+// 이 고정 확인을 쓸 수 없다. 그때는 rename 확인을 건너뛰고 이름 대조만 한 뒤 쓴 직후 대조(recheck, 모든 길에 있음)에 맡긴다.
 function pinnedWin(id, file, made, network) {
   if (!network && !renameBlocked(id.real)) throw moved(id);
   if (!namesStill(id, file, made)) throw moved(id);
 }
 
 // 이름 대조: 그 이름이 링크 아닌 처음 폴더, 실제 경로가 같음, 파일 이름이 연 파일, 링크 수 1. 볼 수 없으면(지워짐 등) 거짓.
+// made 는 연 파일의 fstat 과 fd(made.fd).
 function namesStill(id, file, made) {
   try {
     const dir = fs.lstatSync(id.real, { bigint: true, throwIfNoEntry: false });
-    const at = fs.lstatSync(file, { bigint: true, throwIfNoEntry: false });
-    const now = linksNow(made);
-    const checks = [dir?.isDirectory(), sameNode(dir, id), samePath(fs.realpathSync.native(id.real), id.real), at?.isFile(), sameNode(at, made), now?.nlink === 1n];
+    const checks = [dir?.isDirectory(), sameNode(dir, id), samePath(fs.realpathSync.native(id.real), id.real), fileStill(file, made, made.fd)];
     return checks.every(Boolean);
   } catch {
     return false;
   }
 }
 
-// 대조 때의 링크 수: 연 파일의 지금 fstat(made.fd 가 있으면), 없으면 연 때의 값.
-const linksNow = (made) => (made && made.fd !== undefined ? fs.fstatSync(made.fd, { bigint: true }) : made);
-
-// 네트워크 경로: 내용을 쓴 직후 fd 와 경로의 (dev, ino), 링크 수를 다시 대조한다. 어긋나면 그 파일을 0 바이트로 자르고 거부.
-// 보장이 약하다: 쓰기와 이 대조 사이에 바꿔치기되면 내용이 잠깐 밖의 파일에 있다가 잘린다.
-function recheckNetwork(id, file, made, fd, hook) {
+// 내용을 쓴 직후 대조(ok). 어긋나면 그 파일을 0 바이트로 자르고 거부. 쓰기와 이 대조 사이에 하드 링크나 바꿔치기가 생기면
+// 내용이 잠깐 그 이름으로도 보였다가 잘린다(쓰기 전 대조가 막지 못하는 남은 틈).
+function recheck(ok, id, fd, hook) {
   hook('written');
-  if (namesStill(id, file, { dev: made.dev, ino: made.ino, fd })) return;
+  if (ok()) return;
   fs.ftruncateSync(fd, 0);
   throw moved(id);
 }
 
 const isNetwork = (real) => real.startsWith('\\\\');
 
-const sameNode = (a, b) => Boolean(a && b) && a.dev === b.dev && a.ino === b.ino;
+// 같은 파일(dev, ino)인지. 파일 ID 가 0 이면(파일 ID 를 주지 않는 일부 NAS, SMB 서버) 대조할 수 없으므로 건너뛰고 참:
+// 그때는 실제 경로 대조와 링크 수만 남는다(SKILL.md 의 약한 보장 줄). 거부하면 그런 NAS 에서 늘 거짓 거부가 된다.
+export const sameNode = (a, b) => Boolean(a && b) && (a.ino === 0n || b.ino === 0n || (a.dev === b.dev && a.ino === b.ino));
+
+// 링크 수 1. 0 은 링크 수를 주지 않는 파일 시스템이라 볼 수 없음으로 보고 참.
+const oneLink = (st) => st.nlink === 1n || st.nlink === 0n;
 
 // 폴더를 제 이름으로 rename 해 보아 막히는지. 드라이브 루트는 늘 막힌 것으로 본다.
 function renameBlocked(dir) {

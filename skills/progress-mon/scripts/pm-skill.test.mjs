@@ -237,6 +237,8 @@ test('SKILL.md: <파일> 과 export 는 덮어쓰지 않음(번호, 링크 안 �
   for (const w of ['파일 이름은 .html 이나 .htm 으로 끝나야 함: ', 'snapshots 자리에 폴더가 아닌 것(링크 포함)이 있어 거부', 'export const NUMBER_MAX = 999;', 'snapshots 의 실제 경로가 자료 폴더 밖이라 거부']) assert.ok(render.includes(w), w);
   assert.ok(s.includes('그 사이 폴더나 위 폴더가 링크로 바뀌면 내용을 쓰지 않고 종료 1(`폴더가 바뀌어 쓰지 않음`)'));
   assert.ok(s.includes('Windows 네트워크 경로(SMB 공유, 매핑 드라이브)는 폴더 고정을 확인할 수 없어 쓴 직후 대조로 대신한다'));
+  assert.ok(s.includes('파일 ID 를 0 으로 주는 NAS 는 파일 정체(dev, ino) 대조를 건너뛰고 실제 경로와 링크 수만 본다'));
+  assert.ok(s.includes('모든 길에서 쓴 직후 한 번 더 대조한다. 쓰는 사이 하드 링크가 생기면 그 파일을 0 바이트로 자르고 종료 1'));
   assert.ok(fs.readFileSync(path.join(HERE, 'pm-config.mjs'), 'utf8').includes("const isNetwork = (real) => real.startsWith('\\\\\\\\');"));
   assert.ok(fs.readFileSync(path.join(HERE, 'pm-config.mjs'), 'utf8').includes('`폴더가 바뀌어 쓰지 않음(링크 바꿔치기로 보임): '));
 });
