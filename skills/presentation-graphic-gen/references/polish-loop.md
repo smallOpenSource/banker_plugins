@@ -26,39 +26,41 @@
 
 ## 한 회차
 
-1. 제안: 좌석 3개가 대상 파일을 스스로 읽고 JSON 배열을 낸다.
+`C="<S>/scripts/consensus.mjs"`, `P=<대본 폴더>/polish`, `R=$P/round-NN`. 모으기, 집계, 적용, 기록은 `consensus.mjs` 가 한다(humanizer 와 같은 파일, 정본은 humanizer).
+처음 한 번 `$P/seats.json` 에 좌석을 쓴다(모델은 4단계에서 고른 것, 노력 `medium`).
+
+```json
+{ "scope": "full",
+  "proposers": [{ "seat": "p1", "model": "<모델>", "effort": "medium" }, { "seat": "p2", "model": "<모델>", "effort": "medium" }, { "seat": "p3", "model": "<모델>", "effort": "medium" }],
+  "voters":    [{ "seat": "v1", "model": "<모델>", "effort": "medium" }, { "seat": "v2", "model": "<모델>", "effort": "medium" }, { "seat": "v3", "model": "<모델>", "effort": "medium" }] }
+```
+
+1. 제안: 좌석 3개가 대상 파일을 스스로 읽고 JSON 배열을 낸다. 답을 그대로 `$R/p1.md`, `$R/p2.md`, `$R/p3.md` 에 쓴다.
 
 ```json
 [{ "file": "coffee.md", "from": "고치려는 원문(파일 안에서 한 번만 나오는 정확한 부분)", "to": "고친 글",
    "kind": "어색함|맞춤법|띄어쓰기|번역투|중복|어순", "reason": "한 줄" }]
 ```
 
-2. 모으기: 같은 `file` 과 `from` 의 제안은 한 후보로 합친다. `to` 가 여러 개면 모두 후보의 안으로 둔다. 이미 결정한 항목(앞 회차의 채택과 기각)과 같은 `from` 은 버린다.
-3. 투표: 새 좌석 3개가 후보마다 `accept` 나 `reject` 를 내고, 고르고 싶은 안이 있으면 `preferredTo` 를 낸다.
+2. 모으기: `node "$C" merge "$R" --root <대본 폴더>`. 같은 `file` 과 `from` 의 제안은 한 후보로 합치고, `to` 가 여럿이면 모두 후보의 안으로 둔다(`$R/candidates.json`). 이미 결정한 항목(앞 회차의 채택과 기각, `$P/decided.json`)과 같은 `from`, 앞 회차의 채택을 되돌리는 제안, `from` 이 정확히 한 번 나오지 않는 제안, 숫자와 코드와 경로와 인용(대본 파일)을 바꾸는 제안은 까닭과 함께 버린다.
+3. 투표: 후보가 있으면 새 좌석 3개가 후보마다 `accept` 나 `reject` 를 내고, 고르고 싶은 안이 있으면 `preferredTo` 를 낸다. 답을 `$R/v1.md` 등에 쓴다.
 
 ```json
 [{ "id": 3, "vote": "accept", "preferredTo": "고친 글", "reason": "한 줄" }]
 ```
 
-4. 결정: 3표 중 2표 이상 `accept` 면 채택. `to` 는 채택표의 `preferredTo` 가운데 가장 많은 것(같으면 처음 제안). 그 밖은 기각.
-   - 합의가 틀린 사실을 바탕으로 하면(예: 원문에 없는 글을 있다고 봄, 문법 규칙을 잘못 앎) 그 합의만 기각하고 까닭을 적는다. 그 밖의 이유로 합의를 뒤집지 않는다.
-   - 같은 자리에 겹치는 채택 항목은 적용 전에 하나로 합친다(`apply-fix.mjs` 는 겹침을 SKIP 한다).
-5. 적용: 채택 목록을 `accepted.json` 으로 쓴다. `node "<S>/scripts/apply-fix.mjs" accepted.json --root <대본 폴더> --dry-run` 으로 본 뒤, `--dry-run` 없이 적용한다. `from` 이 정확히 한 번 나오지 않으면 SKIP 과 까닭이 나온다. SKIP 은 기록에 남기고 다음 회차에 다시 볼 수 있게 결정 목록에서 뺀다.
-6. 기록: 회차마다 `polish/round-NN.json` 을 남긴다.
-
-```json
-{ "round": 2, "scope": "full", "model": "<모델 id>",
-  "proposers": [{ "seat": "p1", "model": "<id>", "items": 4 }], "voters": [{ "seat": "v1", "model": "<id>" }],
-  "candidates": [{ "id": 1, "file": "coffee.md", "from": "...", "to": ["..."], "votes": { "accept": 2, "reject": 1 },
-                   "decision": "accepted", "to_final": "...", "note": "" }],
-  "applied": 3, "skipped": [{ "id": 5, "reason": "from found 2 times" }], "newConsensus": 3 }
-```
-
-- 다음 회차의 좌석에게 결정한 항목(채택과 기각, `from` 과 `to`)을 넘겨 다시 제안하지 않게 한다.
+4. 결정과 적용: `node "$C" tally "$R" --root <대본 폴더> --apply --dry-run` 으로 본 뒤 `--dry-run` 없이 한 번 더.
+   - 3표 중 2표 이상 `accept` 면 채택. `to` 는 채택표의 `preferredTo` 가운데 가장 많은 것(같으면 처음 제안). 그 밖은 기각.
+   - 같은 자리에 겹치는 채택 항목은 `accept` 가 많은 쪽(같으면 낮은 id)만 적용하고 다른 쪽은 보류한다. 보류는 다음 회차에 다시 볼 수 있다.
+   - 합의가 틀린 사실을 바탕으로 하면(예: 원문에 없는 글을 있다고 봄, 문법 규칙을 잘못 앎) `--apply` 없이 집계한 뒤 그 합의를 `$R/accepted.json` 에서 빼고 `node "<S>/scripts/apply-fix.mjs" "$R/accepted.json" --root <대본 폴더>` 로 적용한다. 까닭을 적는다. 그 밖의 이유로 합의를 뒤집지 않는다.
+   - 적용에서 `from` 이 정확히 한 번 나오지 않으면 SKIP 과 까닭이 나온다. SKIP 은 결정 목록에 들어가지 않아 다음 회차에 다시 볼 수 있다.
+5. 기록: `tally` 가 `$R/round.json`(좌석별 모델과 노력, 좌석이 밝힌 모델, 후보별 표와 결정, 적용 수, SKIP, 새 합의 수)과 `$P/decided.json` 을 쓴다.
+   - 답에 JSON 배열이 없거나 `MODEL:` 줄이 고른 모델과 다른 계열인 좌석은 세지 않는다. 센 좌석이 3개보다 적으면 `merge`, `tally` 가 종료 1 과 다시 띄울 좌석을 낸다.
+   - 다음 회차의 좌석에게 `$P/decided.json` 을 읽게 해 결정한 항목을 다시 제안하지 않게 한다.
 
 ## 끝
 
-- 대상 전체(바뀐 곳만이 아니라 모든 파일)를 본 회차의 새 합의가 0건이면 끝난다. 그 0건 회차의 기록도 남긴다(증거).
+- 대상 전체(바뀐 곳만이 아니라 모든 파일)를 본 회차의 새 합의가 0건이면 끝난다. 그 0건 회차의 `round.json` 도 남긴다(증거).
 - 회차 상한은 6. 6회차에도 새 합의가 있으면 멈추고 보고한다.
 - 끝나면 `make.mjs` 로 다시 만들고 게이트를 다시 돌린다. 화면 글이 바뀌면 길이가 달라지므로 `layout`, `decorations` 결과가 바뀔 수 있다.
 
@@ -70,7 +72,7 @@
 너는 한국어 발표 원고의 교정 위원이다. 아래 파일을 직접 읽어라: <파일 목록>.
 대상은 대본의 '말:' 블록과 '화면:' 줄, 장면 파일 안의 한국어 화면 글뿐이다. 영문, 숫자, 코드, 연출([...])은 건드리지 마라.
 뜻, 사실, 수치를 바꾸거나 더하지 마라. 어색함, 맞춤법, 띄어쓰기, 번역투, 중복, 어순만 고쳐라.
-아래 결정된 항목은 다시 내지 마라: <결정 목록>.
+<대본 폴더>/polish/decided.json 이 있으면 읽어라. 거기 있는 from 은 다시 내지 마라.
 결과는 JSON 배열 하나만: [{"file","from","to","kind","reason"}]. from 은 파일 안에서 정확히 한 번 나오는 부분이어야 한다.
 고칠 것이 없으면 []. 맨 끝 줄에 MODEL: <너의 모델 id> 를 써라.
 ```
@@ -80,7 +82,7 @@
 ```text
 너는 한국어 발표 원고의 교정 심사 위원이다. 아래 후보마다 원문 파일을 직접 열어 앞뒤를 보고 판단하라: <파일 목록>.
 뜻이 바뀌거나 사실이 더해지면 reject. 더 자연스럽고 뜻이 같으면 accept. 여러 안이 있으면 preferredTo 로 하나를 골라라.
-후보: <후보 목록(id, file, from, to 안들, reason)>.
+후보는 <대본 폴더>/polish/round-NN/candidates.json 의 candidates(id, file, from, to 안들, reason)다.
 결과는 JSON 배열 하나만: [{"id","vote","preferredTo","reason"}]. 맨 끝 줄에 MODEL: <너의 모델 id> 를 써라.
 ```
 

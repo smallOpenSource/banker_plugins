@@ -58,6 +58,7 @@ argument-hint: "[<대본.md>] [--format html|pptx|both] [--dir <폴더>] [--scen
 | `node "<S>/scripts/pptx.mjs" verify <파일.pptx> --script <대본> [--media <녹화 폴더>] [--frames <폴더>] [--html <present.html>] [--force]` | PPTX 게이트. 편집 덱의 `anim-match`, `anim-render`, `text-fit` 은 `--html` 이 있어야 돎. `--frames` 폴더가 비어 있지 않으면 2 | 0, 1, 2, 3 |
 | `node "<S>/scripts/pptx.mjs" com <파일.pptx> <PNG 폴더> [--force]` | 선택. Windows 의 PowerPoint 로 열고 슬라이드 PNG 를 냄. 그 밖에서는 SKIP. PNG 폴더가 비어 있지 않으면 2 | 0, 1, 2 |
 | `node "<S>/scripts/pptx.mjs" com --anim <편집.pptx> <폴더> --script <대본> [--video] [--force]` | 선택. PowerPoint 가 편집 덱의 효과, 클릭 수, 자동 첫 묶음을 파일대로 읽는지 보고 클릭마다 캡처. 그 밖에서는 SKIP | 0, 1, 2 |
+| `node "<S>/scripts/consensus.mjs" merge\|tally <회차 폴더> --root <대본 폴더> [--apply] [--dry-run]` | 다듬기 회차의 제안 모으기, 투표 집계와 적용, 기록 | 0, 센 좌석 부족 1, 2 |
 | `node "<S>/scripts/apply-fix.mjs" <accepted.json> [--root <폴더>] [--dry-run]` | 다듬기 회차의 채택 항목을 적용 | 0, 2 |
 
 출력 이름: `<이름>-review-<stamp>.html`, `<이름>-present-<stamp>.html`, `check-<이름>-present-<stamp>/`, `<이름>-recording-<stamp>/`, `<이름>-video-<stamp>.pptx`, `<이름>-edit-<stamp>.pptx`.
@@ -98,7 +99,7 @@ argument-hint: "[<대본.md>] [--format html|pptx|both] [--dir <폴더>] [--scen
 
 ### 8. 한국어 다듬기 합의 루프
 - 화면 글(장면 파일)과 말(대본)을 4단계에서 고른 모델로 다듬는다. 순서와 기록 형식은 `<S>/references/polish-loop.md`.
-- 제안 좌석 3개, 투표 좌석 3개, 3표 중 2표 이상이면 채택. `apply-fix.mjs` 로 적용한다.
+- 제안 좌석 3개, 투표 좌석 3개, 3표 중 2표 이상이면 채택. 모으기, 집계, 적용, 기록은 `consensus.mjs`(humanizer 와 같은 파일)가 한다.
 - 끝: 대상 전체를 본 마지막 회차의 새 합의가 0건. 회차 상한 6. 끝나면 다시 만들고 게이트를 다시 돌린다.
 
 ### 9. PPTX

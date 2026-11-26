@@ -1,4 +1,4 @@
-// apply-fix.test.mjs: the polishing loop's apply step. Run: node --test scripts/apply-fix.test.mjs
+// apply-fix.test.mjs: the consensus loop's apply step (shared with presentation-graphic-gen). Run: node --test scripts/apply-fix.test.mjs
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -8,7 +8,7 @@ import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { applyFixes } from './apply-fix.mjs';
 
-const TMP = mkdtempSync(join(tmpdir(), 'pgg-apply-test-'));
+const TMP = mkdtempSync(join(tmpdir(), 'humanizer-apply-test-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
 const CLI = fileURLToPath(new URL('./apply-fix.mjs', import.meta.url));
 

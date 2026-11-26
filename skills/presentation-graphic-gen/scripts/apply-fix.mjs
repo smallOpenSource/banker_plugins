@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// apply-fix.mjs: applies the accepted items of one polishing round (references/polish-loop.md) to the files.
+// apply-fix.mjs: applies the accepted items of one consensus round to the files (humanizer references/consensus-loop.md,
+// presentation-graphic-gen references/polish-loop.md). The source of truth is skills/humanizer/scripts; the copy in
+// presentation-graphic-gen is kept byte for byte by scripts/sync-adapter.js.
 //
 //   node scripts/apply-fix.mjs <accepted.json> [--root <dir>] [--dry-run]
 //
@@ -14,7 +16,21 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, writeFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readText } from './build.mjs';
+
+const fail = (msg, exit) => Object.assign(new Error(msg), { exit });
+
+/** A text input as text: UTF-8 (a BOM is dropped) or UTF-16 with its BOM; anything else is a file error (exit 2). */
+export function readText(file) {
+  const bytes = readFileSync(file);
+  const utf16 = bytes[0] === 0xff && bytes[1] === 0xfe ? 'utf-16le' : bytes[0] === 0xfe && bytes[1] === 0xff ? 'utf-16be' : null;
+  let text;
+  try {
+    text = new TextDecoder(utf16 || 'utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw fail(`${file} is not UTF-8 (or UTF-16 with a BOM); save it as UTF-8`, 2);
+  }
+  return text.startsWith('\uFEFF') ? text.slice(1) : text;
+}
 
 const show = (s) => JSON.stringify(String(s).length > 40 ? String(s).slice(0, 40) + '..' : String(s));
 

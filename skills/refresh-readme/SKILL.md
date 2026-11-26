@@ -25,7 +25,7 @@ Claude Code(OMC)·Codex CLI(OMX) 양쪽에서 동일하게 동작한다.
 ## When NOT to use
 - **README 가 아닌 파일.** 범위는 README 파일뿐이다. SKILL.md·CHANGELOG·주석·위키는 밖이다.
 - **코드 슬롭 정리.** `ai-slop-cleaner`(OMC 네이티브) 소관이다. 그건 **코드 전용**이고 자기 문서에서 "clean up formatting" 을 명시적 비적합으로 선언한다. 산문·README 는 대상이 아니다. banker 는 OMC 네이티브를 중복 번들하지 않는다.
-- **영문 산문 윤문.** `humanizer`(banker) 소관이다. 스코프가 **영문 산문**이고 기본 자세가 개성·1인칭 주입이라, 한국어 레퍼런스 문서에는 역행한다. README 가 영문이고 목적이 "읽는 맛"이면 그쪽으로 보내라.
+- **문장 윤문.** `humanizer`(banker) 소관이다. 언어를 판정해 그 언어 기준으로, 독립 좌석의 합의로 어색한 문장만 고친다(내용은 더하거나 빼지 않음). 이 스킬의 임무(사실 대조)와 다르다. README 의 사실을 맞춘 뒤 문장이 어색하면 그쪽으로 보내라.
 - **`.gitignore` 정리.** `refresh-git-ignore` 소관이다. 구조가 형제일 뿐 대상 파일이 다르다. 그 스킬은 README 를 보지 않는다.
 - **없는 README 를 새로 쓰는 것.** 이건 드리프트 해소지 작성이 아니다. 초안이 필요하면 별도 지시로 간다.
 
@@ -86,9 +86,9 @@ claude mcp add context7 -s user -- npx -y @upstash/context7-mcp
 슬롭은 **증상**으로 다룬다. 과장된 형용사는 "AI 티가 난다"라서 고치는 게 아니라 **그 문장이 사실을 안 말하고 있어서** 고친다.
 사실을 말하는 문장이 우연히 마커를 하나 밟았다면 그건 고칠 대상이 아니다.
 
-**마커 목록을 여기에 옮겨 적지 마라.** `humanizer` 가 이미 그 목록을 갖고 있고, humanizer 자신도 그 안에서 갈라져 있다
+**마커 목록을 여기에 옮겨 적지 마라.** `humanizer` 가 언어별 기준 파일(`references/criteria-ko.md`, `references/patterns-en.md`, `references/criteria-general.md`)로 이미 갖고 있고, 영문 목록은 그 안에서도 갈라져 있다
 (한 곳은 em dash 를 hard constraint 라 하고, 다른 곳은 단독 em dash 는 증거가 아니라고 한다).
-여기서 재서술하면 banker 가 **서로 모순되는 사본 3개**를 지게 된다. 마커 판단이 필요하면 humanizer 를 읽고 위임한다.
+여기서 재서술하면 banker 가 **서로 모순되는 사본**을 하나 더 지게 된다. 마커 판단이 필요하면 humanizer 의 기준 파일을 읽고 위임한다.
 
 ## 워크플로
 

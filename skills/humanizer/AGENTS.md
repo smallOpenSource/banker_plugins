@@ -1,5 +1,9 @@
 # AGENTS.md
 
+> **In banker:** upstream guidance of blader/humanizer 2.8.0. In banker the skill is `SKILL.md` (a consensus loop of
+> independent seats) and the upstream pattern list, unchanged, is `references/patterns-en.md`; the contract below
+> applies to that file.
+
 Guidance for AI coding agents (Claude Code, Codex, Warp, etc.) working in this repository.
 
 ## What this repo is

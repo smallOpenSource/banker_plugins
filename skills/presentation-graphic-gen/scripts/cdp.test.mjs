@@ -89,7 +89,7 @@ test('a helper reached through a linked folder still runs its command (it once e
 });
 
 test('every command file can be imported when argv[1] is not a file (node -e): no ENOENT from realpath, nothing runs', () => {
-  for (const file of ['apply-fix', 'build', 'cdp', 'check', 'make', 'pptx-edit', 'pptx-video', 'pptx', 'record']) {
+  for (const file of ['apply-fix', 'build', 'cdp', 'check', 'consensus', 'make', 'pptx-edit', 'pptx-video', 'pptx', 'record']) {
     const url = pathToFileURL(join(SKILL, 'scripts', `${file}.mjs`)).href;
     const r = spawnSync(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(url)})`, 'no-such-file'], { encoding: 'utf8' });
     assert.equal(r.status, 0, `${file}: ${r.stderr}`);
